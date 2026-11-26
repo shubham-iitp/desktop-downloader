@@ -21,6 +21,15 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 const startHidden = process.argv.includes('--hidden');
+
+/** A magnet link passed on the command line (Windows/Linux protocol launch). Only magnet: is accepted. */
+function magnetFrom(argv: string[]): string | undefined {
+  const link = argv.find((a) => /^magnet:\?/i.test(a));
+  return link && link.length <= 65_536 ? link : undefined;
+}
+
+// A magnet link that arrived before the window could take it (cold start).
+let pendingLink: string | undefined = magnetFrom(process.argv);
 let win: BrowserWindow | undefined;
 let quitting = false;
 let shutdownDone = false;
@@ -65,6 +74,13 @@ function send(channel: string, ...args: unknown[]) {
 
 function sendCommand(cmd: AppCommand) {
   send('app:command', cmd);
+}
+
+/** Brings the window forward and hands it a magnet link to show in the Torrent tab. */
+function openLink(link: string) {
+  showWindow();
+  if (win && !win.isDestroyed() && !win.webContents.isLoading()) send('app:openLink', link);
+  else pendingLink = link; // the renderer collects it with app:takePendingLink once loaded
 }
 
 function showWindow() {
@@ -131,7 +147,7 @@ function createWindow() {
   });
 
   win.once('ready-to-show', () => {
-    if (!startHidden) win?.show();
+    if (!startHidden || pendingLink) win?.show();
   });
 
   // The close button always asks: Hide to tray / Quit / Cancel (rendered by the app's own dialog).
@@ -220,10 +236,27 @@ registerIpc({
   onCloseChoice,
   onSettingsChanged,
   quit: () => app.quit(),
+  takePendingLink: () => {
+    const link = pendingLink;
+    pendingLink = undefined;
+    return link ?? null;
+  },
   appInfo: () => ({ platform: process.platform, version: app.getVersion(), isMac: process.platform === 'darwin' })
 });
 
-app.on('second-instance', () => showWindow());
+// Clicking a magnet link while the app runs starts a second instance; it forwards argv here.
+app.on('second-instance', (_e, argv) => {
+  const link = magnetFrom(argv);
+  if (link) openLink(link);
+  else showWindow();
+});
+// macOS delivers protocol launches as open-url (before or after ready).
+app.on('open-url', (e, url) => {
+  e.preventDefault();
+  if (!/^magnet:\?/i.test(url)) return;
+  if (app.isReady()) openLink(url);
+  else pendingLink = url;
+});
 app.on('activate', () => showWindow());
 app.on('window-all-closed', () => {
   /* keep running in the tray */
@@ -255,12 +288,25 @@ app.whenReady().then(async () => {
     cb(['clipboard-read', 'clipboard-sanitized-write', 'notifications'].includes(permission))
   );
   buildMenu();
+  // Become the handler for magnet: links once, on first run of the installed app (a dev run
+  // would point them at the bare Electron binary). If the user later picks another torrent
+  // client, we don't take the links back. The uninstaller removes our registration.
+  // The portable exe unpacks to a temp folder on each start, so register the exe the user
+  // actually ran (electron-builder sets PORTABLE_EXECUTABLE_FILE), not the temp copy.
+  const portableExe = process.env.PORTABLE_EXECUTABLE_FILE;
+  const handlerArgs: [string, string?, string[]?] = portableExe ? ['magnet', portableExe, []] : ['magnet'];
+  if (app.isPackaged && !settings.getFlag(portableExe ? 'magnetRegisteredPortable' : 'magnetRegistered')) {
+    if (app.isDefaultProtocolClient(...handlerArgs) || app.setAsDefaultProtocolClient(...handlerArgs)) {
+      settings.setFlag(portableExe ? 'magnetRegisteredPortable' : 'magnetRegistered', true);
+    }
+  }
   jobs.load();
   tray.create();
   createWindow();
   await daemon.start();
 
-  if (app.isPackaged) {
+  // Auto-update works for the installed (NSIS) build only, not the portable exe.
+  if (app.isPackaged && !process.env.PORTABLE_EXECUTABLE_FILE) {
     try {
       const { autoUpdater } = await import('electron-updater');
       void autoUpdater.checkForUpdatesAndNotify();

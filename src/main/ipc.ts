@@ -19,6 +19,7 @@ export interface IpcDeps {
   onCloseChoice: (choice: CloseChoice) => void;
   onSettingsChanged: (prev: Settings, next: Settings) => void;
   quit: () => void;
+  takePendingLink: () => string | null;
   appInfo: () => { platform: string; version: string; isMac: boolean };
 }
 
@@ -170,6 +171,7 @@ export function registerIpc(d: IpcDeps): void {
   handle('app:info', null, () => d.appInfo());
   handle('app:closeChoice', z.tuple([z.enum(['hide', 'quit', 'cancel'])]), (c) => d.onCloseChoice(c));
   handle('app:quit', null, () => d.quit());
+  handle('app:takePendingLink', null, () => d.takePendingLink());
   handle('app:openExternal', z.tuple([z.string().max(2048)]), async (url) => {
     if (ALLOWED_EXTERNAL.test(url)) await shell.openExternal(url);
   });

@@ -2,6 +2,15 @@
 
 A cross-platform download manager (Windows, macOS, Linux) built on Electron, with **aria2c** as its only download engine. One queue for direct file links (HTTP/HTTPS/FTP/SFTP), torrents and magnet links, and Metalink.
 
+## Download (Windows)
+
+From [Releases](https://github.com/shubham-iitp/desktop-downloader/releases/latest):
+
+- **`Desktop-Downloader-Setup-<version>.exe`** is the installer. It adds Start-menu and desktop shortcuts plus an uninstaller, opens `magnet:` links in the app, and gets auto-updates.
+- **`Desktop-Downloader-<version>-portable.exe`** needs no install: download and run it. Queue and settings are kept in `%APPDATA%\Desktop Downloader` like the installed app. There are no auto-updates, so download new versions by hand.
+
+The builds aren't code-signed yet, so Windows SmartScreen may warn: **More info → Run anyway**. Compare the file against `SHA256SUMS.txt` in the release.
+
 ## Features
 
 - **Two tabs, one queue.** Torrent (magnet links, `.torrent` files) and Normal (file links, Metalink). aria2's parallel-download slots are shared by both tabs.

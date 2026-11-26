@@ -116,6 +116,7 @@ export class JobManager extends EventEmitter {
       job.uploadSpeed = 0;
       job.eta = null;
       this.jobs.set(job.id, job);
+      if (job.status === 'completed') removeSavedMetadata(job); // left by older versions
     }
     this.pruneHistory();
   }
@@ -447,6 +448,7 @@ export class JobManager extends EventEmitter {
       this.byGid.delete(job.gid);
     }
     if (deleteFiles) await this.trashPaths(job.dir, paths);
+    removeSavedMetadata(job); // re-adding a magnet fetches its metadata again anyway
     if (canTransition(job.status, 'cancelled')) job.status = 'cancelled';
     this.jobs.delete(id);
     this.db.deleteJob(id);
@@ -525,6 +527,7 @@ export class JobManager extends EventEmitter {
             this.byGid.delete(e.gid);
             await client.call('aria2.removeDownloadResult', e.gid).catch(() => {});
             if (job.kind === 'torrent' && job.options.selectFiles?.length) this.dropUnselected(job, s);
+            removeSavedMetadata(job);
           }
           break;
         }
@@ -1003,6 +1006,25 @@ function removePaths(dir: string, paths: string[], keep: Set<string> = new Set()
       fs.rmdirSync(d); // only succeeds when empty
     } catch {
       /* not empty or missing */
+    }
+  }
+}
+
+/**
+ * For magnet downloads aria2 saves the fetched metadata as <dir>/<infohash>.torrent
+ * (--bt-save-metadata, so an unfinished magnet can resume without asking peers again).
+ * Once the download is finished or removed it's clutter: delete it. Only for magnet jobs,
+ * so a .torrent file the user opened themselves is never touched.
+ */
+function removeSavedMetadata(job: Job): void {
+  if (job.kind !== 'torrent' || !/^magnet:/i.test(job.url)) return;
+  const hash = job.infoHash ?? infoHashFromMagnet(job.url);
+  if (!hash || !/^[0-9a-f]{40}$/i.test(hash)) return;
+  for (const name of [`${hash.toLowerCase()}.torrent`, `${hash.toUpperCase()}.torrent`]) {
+    try {
+      fs.rmSync(path.join(job.dir, name), { force: true });
+    } catch {
+      /* missing or locked */
     }
   }
 }

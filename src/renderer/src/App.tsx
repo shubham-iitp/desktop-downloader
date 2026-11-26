@@ -27,6 +27,14 @@ export function App() {
   const [repair, setRepair] = useState<'none' | 'broken' | 'fixed'>('none');
   const [removeId, setRemoveId] = useState<string | null>(null);
   const closeRemove = useCallback(() => setRemoveId(null), []);
+  // A magnet link opened from outside the app (browser click), waiting for the add panel.
+  const [incoming, setIncoming] = useState<{ url: string; id: number } | null>(null);
+  const takeIncoming = useCallback(() => setIncoming(null), []);
+  const receiveLink = useCallback((url: string) => {
+    setView('main');
+    setTab('torrent');
+    setIncoming({ url, id: Date.now() });
+  }, []);
 
   useEffect(() => {
     void window.dl.getSettings().then(setSettings);
@@ -44,6 +52,8 @@ export function App() {
       })
     );
     const offEngine = window.dl.onEngineStatus(setEngine);
+    void window.dl.takePendingLink().then((link) => link && receiveLink(link));
+    const offLink = window.dl.onOpenLink(receiveLink);
     const offCmd = window.dl.onCommand((c) => {
       if (c === 'ask-close') setCloseOpen(true);
       if (c === 'settings') setView('settings');
@@ -57,8 +67,9 @@ export function App() {
       offUpdate();
       offEngine();
       offCmd();
+      offLink();
     };
-  }, []);
+  }, [receiveLink]);
 
   // Repair screen: shown while the engine is missing or crashed, then a "running again" state.
   useEffect(() => {
@@ -168,7 +179,14 @@ export function App() {
                 <LegalNotice />
                 <Queue tab={tab} jobs={list} density={settings.density} onRemove={(j) => setRemoveId(j.id)} />
               </div>
-              <AddPanel key={tab} tab={tab} settings={settings} openTorrentTick={openTorrentTick} />
+              <AddPanel
+                key={tab}
+                tab={tab}
+                settings={settings}
+                openTorrentTick={openTorrentTick}
+                incoming={tab === 'torrent' ? incoming : null}
+                onIncomingTaken={takeIncoming}
+              />
             </div>
           </div>
         </>

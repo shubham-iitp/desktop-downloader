@@ -33,6 +33,8 @@ const api: DownloaderApi = {
   appInfo: () => ipcRenderer.invoke('app:info'),
   closeChoice: (c) => ipcRenderer.invoke('app:closeChoice', c),
   quit: () => ipcRenderer.invoke('app:quit'),
+  takePendingLink: () => ipcRenderer.invoke('app:takePendingLink'),
+  onOpenLink: on('app:openLink'),
   openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
   minimize: () => ipcRenderer.invoke('win:minimize'),
   toggleMaximize: () => ipcRenderer.invoke('win:toggleMaximize'),

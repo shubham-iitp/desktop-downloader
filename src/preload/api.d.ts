@@ -35,6 +35,10 @@ export interface DownloaderApi {
   appInfo(): Promise<AppInfo>;
   closeChoice(c: CloseChoice): Promise<void>;
   quit(): Promise<void>;
+  /** A magnet link the app was launched with, if the renderer hasn't taken it yet. */
+  takePendingLink(): Promise<string | null>;
+  /** A magnet link clicked while the app is running. */
+  onOpenLink(cb: (link: string) => void): () => void;
   openExternal(url: string): Promise<void>;
   minimize(): Promise<void>;
   toggleMaximize(): Promise<void>;

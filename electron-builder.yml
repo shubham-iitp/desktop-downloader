@@ -15,15 +15,28 @@ extraResources:
 # aria2c lives outside the asar (an asar can't be executed from). Folder names use
 # Node's platform names (win32/darwin/linux), so each platform maps its own folder.
 win:
-  target: [nsis]
+  # nsis: the installer. portable: a single .exe that runs without installing.
+  target: [nsis, portable]
   extraResources:
     - from: resources/bin/win32-${arch}
       to: bin/win32-${arch}
   # Sign every bundled .exe too: unsigned helpers trigger SmartScreen/antivirus.
   signExts: [.exe]
+portable:
+  artifactName: Desktop-Downloader-${version}-portable.exe
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  # Adds an "Uninstall Desktop Downloader" Start-menu shortcut, and on uninstall removes it
+  # and the app's magnet: registration.
+  include: build/installer.nsh
+# magnet: links open Downloader. On macOS/Linux the installer registers this; on Windows the
+# app registers itself at startup (setAsDefaultProtocolClient) and the uninstaller removes it.
+protocols:
+  - name: Magnet link
+    schemes: [magnet]
 mac:
   target: [dmg, zip]
   category: public.app-category.utilities

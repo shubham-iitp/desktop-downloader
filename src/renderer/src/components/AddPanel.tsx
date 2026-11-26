@@ -7,6 +7,9 @@ interface Props {
   tab: Tab;
   settings: Settings;
   openTorrentTick: number;
+  /** A magnet link opened from outside the app: fill the box and load its file list. */
+  incoming?: { url: string; id: number } | null;
+  onIncomingTaken?: () => void;
 }
 
 function validate(tab: Tab, link: string): string {
@@ -39,7 +42,7 @@ function failureOf(tab: Tab, e: { code: string; message: string; status?: number
 }
 
 /** "Add a torrent" / "Add a file link" panel: link box, Check link, probe result, Save to, Add to queue. */
-export function AddPanel({ tab, settings, openTorrentTick }: Props) {
+export function AddPanel({ tab, settings, openTorrentTick, incoming, onIncomingTaken }: Props) {
   const isT = tab === 'torrent';
   const [link, setLink] = useState('');
   const [error, setError] = useState('');
@@ -159,6 +162,16 @@ export function AddPanel({ tab, settings, openTorrentTick }: Props) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openTorrentTick, isT]);
+
+  // Magnet link clicked in a browser: paste it and fetch the file list (adding still needs a click).
+  useEffect(() => {
+    if (!incoming || !isT) return;
+    onIncomingTaken?.();
+    setLink(incoming.url);
+    setError('');
+    void runProbe(incoming.url, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incoming?.id, isT]);
 
   const paste = async () => {
     try {
