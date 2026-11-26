@@ -71,6 +71,23 @@ function timeoutResult(url: string): ProbeResult {
   };
 }
 
+const MAX_TORRENT_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Downloads a .torrent file from an http(s) link so it can be handed to aria2 as bytes
+ * (aria2 would otherwise save the .torrent itself into the download folder).
+ */
+export async function fetchTorrentFile(url: string): Promise<Buffer> {
+  const res = await net.fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(15_000), bypassCustomProtocolHandlers: true });
+  if (!res.ok) throw new Error(`HTTP ${res.status} while fetching the .torrent file`);
+  const len = Number(res.headers.get('content-length') || 0);
+  if (len > MAX_TORRENT_BYTES) throw new Error('The .torrent file is too large');
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length > MAX_TORRENT_BYTES) throw new Error('The .torrent file is too large');
+  if (buf[0] !== 0x64 /* 'd' */) throw new Error('That link did not return a .torrent file');
+  return buf;
+}
+
 /** FTP/SFTP: no header check; size and resume support come from aria2 once the job starts. */
 export function probeFtp(url: string): ProbeResult {
   let host: string | undefined;

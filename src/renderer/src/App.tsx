@@ -158,7 +158,6 @@ export function App() {
             setTab={setTab}
             counts={counts}
             parallel={settings.maxConcurrent}
-            setParallel={(n) => updateSettings({ maxConcurrent: n })}
           />
           <div className="scroll" style={{ flex: 1, minHeight: 0 }}>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 20, alignItems: 'flex-start', padding: '20px 24px 24px' }}>

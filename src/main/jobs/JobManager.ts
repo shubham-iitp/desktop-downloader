@@ -69,6 +69,7 @@ export class AppError extends Error {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const isRemote = (url: string) => /^(https?|s?ftp|magnet):/i.test(url);
+const isTorrentUrl = (url: string) => /^https?:\/\//i.test(url) && /\.torrent$/i.test(url.split(/[?#]/)[0]);
 
 /**
  * Owns every job and maps each to an aria2 GID. aria2 reports into it; the renderer
@@ -95,7 +96,8 @@ export class JobManager extends EventEmitter {
     private db: Db,
     private settings: SettingsStore,
     private notifier: Notifier,
-    private logTail: () => string
+    private logTail: () => string,
+    private fetchTorrent: (url: string) => Promise<Buffer>
   ) {
     super();
   }
@@ -191,10 +193,9 @@ export class JobManager extends EventEmitter {
     let gid: string;
     let peers: number | undefined;
 
-    if (!isRemote(url)) {
-      if (!this.allowedLocal.has(url)) throw new AppError('PROBE_FAILED', 'Choose the .torrent file with Open .torrent file…');
-      const b64 = fs.readFileSync(url).toString('base64');
-      gid = await client.call<string>('aria2.addTorrent', b64, [], { ...opts, pause: 'true' });
+    if (!isRemote(url) || isTorrentUrl(url)) {
+      const bytes = await this.torrentBytes(url);
+      gid = await client.call<string>('aria2.addTorrent', bytes.toString('base64'), [], { ...opts, pause: 'true' });
       this.probes.set(probeId, gid);
     } else {
       const metaGid = await client.call<string>('aria2.addUri', [url], opts);
@@ -335,8 +336,12 @@ export class JobManager extends EventEmitter {
       // The paused probe download becomes the job.
       this.probes.delete(probeId);
       const client = this.requireClient();
-      const change: Record<string, string> = { dir, 'bt-max-peers': String(job.connections) };
-      if (options.selectFiles?.length) change['select-file'] = options.selectFiles.join(',');
+      const change: Record<string, string> = { dir, 'bt-max-peers': String(job.connections), 'check-integrity': 'true' };
+      if (options.selectFiles?.length) {
+        change['select-file'] = options.selectFiles.join(',');
+        // Unselected files that share a piece get created; don't reserve their full size.
+        change['file-allocation'] = 'none';
+      }
       await client.call('aria2.changeOption', probeGid, change).catch((e) => log.warn('changeOption on probe', e));
       await client.call('aria2.unpause', probeGid);
       job.gid = probeGid;
@@ -401,20 +406,22 @@ export class JobManager extends EventEmitter {
     clearTimeout(this.retryTimers.get(id));
     this.retryTimers.delete(id);
     const client = this.client;
+    let paths = job.files.length ? [...job.files] : job.outName ? [path.join(job.dir, job.outName)] : [];
+    if (deleteFiles && job.kind === 'torrent') {
+      // Include unselected files aria2 created because they share pieces with selected ones.
+      if (job.gid && client?.connected) {
+        const all = await client.call<A2File[]>('aria2.getFiles', job.gid).catch(() => [] as A2File[]);
+        paths = [...new Set([...paths, ...all.map((f) => path.normalize(f.path)).filter((p) => p && !p.startsWith('[METADATA]'))])];
+      }
+      paths.push(path.join(job.dir, job.title)); // aria2 names the control file after the torrent: <dir>/<name>.aria2
+    }
     if (job.gid && client?.connected) {
       await client.call('aria2.forceRemove', job.gid).catch(() => {});
       await sleep(250);
       await client.call('aria2.removeDownloadResult', job.gid).catch(() => {});
       this.byGid.delete(job.gid);
     }
-    if (deleteFiles) {
-      const paths = job.files.length ? job.files : job.outName ? [path.join(job.dir, job.outName)] : [];
-      for (const p of paths) {
-        const abs = path.resolve(p);
-        if (!abs.startsWith(path.resolve(job.dir) + path.sep)) continue; // never outside the job's folder
-        for (const f of [abs, `${abs}.aria2`]) fs.rmSync(f, { force: true });
-      }
-    }
+    if (deleteFiles) removePaths(job.dir, paths);
     if (canTransition(job.status, 'cancelled')) job.status = 'cancelled';
     this.jobs.delete(id);
     this.db.deleteJob(id);
@@ -492,6 +499,7 @@ export class JobManager extends EventEmitter {
             job.uploadSpeed = 0;
             this.byGid.delete(e.gid);
             await client.call('aria2.removeDownloadResult', e.gid).catch(() => {});
+            if (job.kind === 'torrent' && job.options.selectFiles?.length) this.dropUnselected(job, s);
           }
           break;
         }
@@ -572,15 +580,21 @@ export class JobManager extends EventEmitter {
     const s = this.settings.get();
     const o: Record<string, string | string[]> = { dir: job.dir };
     if (job.kind === 'file' && job.outName) o.out = job.outName;
-    if (job.kind === 'torrent') o['bt-max-peers'] = String(job.connections);
-    else {
+    if (job.kind === 'torrent') {
+      o['bt-max-peers'] = String(job.connections);
+      // Existing data (e.g. files kept from an earlier download) is hash-checked and reused.
+      o['check-integrity'] = 'true';
+    } else {
       const n = job.resumable ? job.connections : 1;
       o.split = String(n);
       o['max-connection-per-server'] = String(n);
     }
     if (job.options.speedLimitKBps && job.options.speedLimitKBps > 0) o['max-download-limit'] = toAria2Limit(job.options.speedLimitKBps);
     if (job.options.headers?.length) o.header = job.options.headers;
-    if (job.options.selectFiles?.length) o['select-file'] = job.options.selectFiles.join(',');
+    if (job.options.selectFiles?.length) {
+      o['select-file'] = job.options.selectFiles.join(',');
+      o['file-allocation'] = 'none';
+    }
     if (job.options.overwrite === true) {
       o['allow-overwrite'] = 'true';
       o['auto-file-renaming'] = 'false';
@@ -593,9 +607,9 @@ export class JobManager extends EventEmitter {
 
     let gid: string;
     const remote = isRemote(job.url);
-    if (!remote && job.kind === 'torrent') {
-      const b64 = fs.readFileSync(job.url).toString('base64');
-      gid = await client.call<string>('aria2.addTorrent', b64, [], o);
+    if (job.kind === 'torrent' && (!remote || isTorrentUrl(job.url))) {
+      const bytes = await this.torrentBytes(job.url);
+      gid = await client.call<string>('aria2.addTorrent', bytes.toString('base64'), [], o);
     } else if (!remote && job.kind === 'metalink') {
       const b64 = fs.readFileSync(job.url).toString('base64');
       const gids = await client.call<string[]>('aria2.addMetalink', b64, o);
@@ -797,6 +811,36 @@ export class JobManager extends EventEmitter {
     }, 250);
   }
 
+  /**
+   * After a partial torrent finishes (and seeding has stopped), delete the unselected files
+   * aria2 created only because they share a piece with a selected file. On NTFS a single
+   * boundary write at the end of a large file allocates the whole file. The torrent's
+   * control file goes too, since the download is finished.
+   */
+  private dropUnselected(job: Job, s: A2Status): void {
+    const keep = new Set(job.files.map((f) => path.resolve(f)));
+    const fragments = (s.files ?? [])
+      .filter((f) => f.selected === 'false' && f.path && !f.path.startsWith('[METADATA]'))
+      .map((f) => path.normalize(f.path))
+      .filter((p) => !keep.has(path.resolve(p)));
+    removePaths(job.dir, [...fragments, path.join(job.dir, job.title)], keep);
+  }
+
+  /** .torrent contents: a dialog-picked local file, or fetched by the main process from an http(s) link. */
+  private async torrentBytes(url: string): Promise<Buffer> {
+    if (isTorrentUrl(url)) {
+      try {
+        return await this.fetchTorrent(url);
+      } catch (e) {
+        throw new AppError('PROBE_FAILED', (e as Error).message);
+      }
+    }
+    if (!this.allowedLocal.has(url) && ![...this.jobs.values()].some((j) => j.url === url)) {
+      throw new AppError('PROBE_FAILED', 'Choose the .torrent file with Open .torrent file…');
+    }
+    return fs.readFileSync(url);
+  }
+
   private jobByGid(gid: string): Job | undefined {
     const id = this.byGid.get(gid);
     return id ? this.jobs.get(id) : undefined;
@@ -811,6 +855,35 @@ export class JobManager extends EventEmitter {
   private requireClient(): Aria2Client {
     if (!this.client?.connected) throw new AppError('ENGINE_CRASH', 'The download engine is not running.');
     return this.client;
+  }
+}
+
+/**
+ * Deletes files (and their .aria2 control files) that lie inside `dir`, then removes any
+ * folders under `dir` they leave empty. Never touches anything outside `dir` or in `keep`.
+ */
+function removePaths(dir: string, paths: string[], keep: Set<string> = new Set()): void {
+  const root = path.resolve(dir);
+  const dirs = new Set<string>();
+  for (const p of paths) {
+    const abs = path.resolve(p);
+    if (!abs.startsWith(root + path.sep)) continue;
+    for (const f of [abs, `${abs}.aria2`]) {
+      if (keep.has(f)) continue;
+      try {
+        if (fs.statSync(f).isFile()) fs.rmSync(f, { force: true });
+      } catch {
+        /* missing */
+      }
+    }
+    for (let d = path.dirname(abs); d.startsWith(root + path.sep); d = path.dirname(d)) dirs.add(d);
+  }
+  for (const d of [...dirs].sort((a, b) => b.length - a.length)) {
+    try {
+      fs.rmdirSync(d); // only succeeds when empty
+    } catch {
+      /* not empty or missing */
+    }
   }
 }
 

@@ -157,6 +157,9 @@ function Downloads({ s, update }: SectionProps) {
           </button>
         </div>
       </Row>
+      <Row title="Parallel downloads" hint="How many downloads run at once, across both tabs. The rest wait in the queue.">
+        <Stepper value={s.maxConcurrent} min={1} max={10} onChange={(n) => update({ maxConcurrent: n })} decLabel="Fewer parallel downloads" incLabel="More parallel downloads" />
+      </Row>
       <Row title="Connections per file" hint="How many parts a file link is split into. aria2c allows up to 16.">
         <Stepper value={s.connectionsPerFile} min={1} max={16} onChange={(n) => update({ connectionsPerFile: n })} decLabel="Fewer connections" incLabel="More connections" />
       </Row>

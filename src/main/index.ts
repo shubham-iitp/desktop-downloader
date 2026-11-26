@@ -9,6 +9,7 @@ import { JobManager } from './jobs/JobManager';
 import { registerIpc } from './ipc';
 import { AppTray, appIcon } from './tray';
 import { log } from './log';
+import { fetchTorrentFile } from './probe';
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -41,7 +42,7 @@ const notifier = {
   }
 };
 
-const jobs = new JobManager(db, settings, notifier, () => daemon.readLogTail(200));
+const jobs = new JobManager(db, settings, notifier, () => daemon.readLogTail(200), fetchTorrentFile);
 
 const tray = new AppTray({
   show: () => showWindow(),

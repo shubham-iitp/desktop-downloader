@@ -101,6 +101,17 @@ export class Aria2Daemon extends EventEmitter {
       // --continue is set per job when the app re-adds its own unfinished downloads; a global
       // --continue=true would "resume" into unrelated existing files and defeat "Keep both".
       '--bt-save-metadata=true',
+      // DHT lets magnets find peers when their trackers are dead or blocked. Keep the routing
+      // table with the app's data and bootstrap it on first run (when the table is empty).
+      '--enable-dht=true',
+      `--dht-file-path=${path.join(this.paths.userData, 'dht.dat')}`,
+      `--dht-file-path6=${path.join(this.paths.userData, 'dht6.dat')}`,
+      '--dht-entry-point=router.bittorrent.com:6881',
+      '--dht-entry-point6=router.bittorrent.com:6881',
+      '--bt-enable-lpd=true',
+      // Don't drop <infohash>.torrent copies into the download folder. The app re-adds
+      // torrent jobs itself (from SQLite, with continue=true) when aria2's session lacks them.
+      '--rpc-save-upload-metadata=false',
       '--follow-torrent=true',
       '--check-certificate=true',
       '--console-log-level=warn',
