@@ -11,6 +11,10 @@ import { AppTray, appIcon } from './tray';
 import { log } from './log';
 import { fetchTorrentFile } from './probe';
 
+// Development only: a separate profile (queue, settings, session) so a dev run never
+// touches the installed app's data or collides with its single-instance lock.
+if (!app.isPackaged && process.env.DD_USER_DATA) app.setPath('userData', process.env.DD_USER_DATA);
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
   process.exit(0);

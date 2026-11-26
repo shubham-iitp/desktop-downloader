@@ -22,6 +22,7 @@ import type { Db } from '../db';
 import { globalAria2Options, type SettingsStore } from '../settings';
 import { sanitizeFilename } from '../probeParse';
 import { log } from '../log';
+import { infoHashFromMagnet, infoHashFromTorrent } from '../torrentHash';
 
 interface A2File {
   index: string;
@@ -45,10 +46,11 @@ interface A2Status {
   files?: A2File[];
   bittorrent?: { info?: { name?: string } };
   seeder?: string;
+  infoHash?: string;
 }
 
 const POLL_KEYS = ['gid', 'status', 'totalLength', 'completedLength', 'downloadSpeed', 'uploadSpeed', 'connections', 'numSeeders'];
-const FULL_KEYS = [...POLL_KEYS, 'followedBy', 'errorCode', 'errorMessage', 'files', 'bittorrent', 'seeder'];
+const FULL_KEYS = [...POLL_KEYS, 'followedBy', 'errorCode', 'errorMessage', 'files', 'bittorrent', 'seeder', 'infoHash'];
 
 export interface Notifier {
   done(job: Job): void;
@@ -192,9 +194,24 @@ export class JobManager extends EventEmitter {
     const opts = { dir, 'pause-metadata': 'true' };
     let gid: string;
     let peers: number | undefined;
+    const fromBytes = !isRemote(url) || isTorrentUrl(url);
+    const bytes = fromBytes ? await this.torrentBytes(url) : undefined;
+    const hash = bytes ? infoHashFromTorrent(bytes) : infoHashFromMagnet(url);
+    if (hash) {
+      const owner = [...this.jobs.values()].find((j) => j.infoHash === hash && j.status !== 'cancelled');
+      if (owner) {
+        throw new AppError('PROBE_FAILED', `This torrent is already in your queue as “${owner.title}”.`);
+      }
+      // A copy no job owns (e.g. left over from an earlier session) would make aria2 refuse it.
+      const stray = await this.findByInfoHash(hash);
+      if (stray) {
+        await client.call('aria2.forceRemove', stray.gid).catch(() => {});
+        await sleep(250);
+        await client.call('aria2.removeDownloadResult', stray.gid).catch(() => {});
+      }
+    }
 
-    if (!isRemote(url) || isTorrentUrl(url)) {
-      const bytes = await this.torrentBytes(url);
+    if (bytes) {
       gid = await client.call<string>('aria2.addTorrent', bytes.toString('base64'), [], { ...opts, pause: 'true' });
       this.probes.set(probeId, gid);
     } else {
@@ -574,6 +591,29 @@ export class JobManager extends EventEmitter {
     }
   }
 
+  /** A live aria2 download (active / waiting / paused) with this info-hash, if any. */
+  private async findByInfoHash(hash: string): Promise<A2Status | undefined> {
+    const client = this.requireClient();
+    const keys = ['gid', 'status', 'infoHash', 'followedBy'];
+    const [act, wait] = (await client.multicall([
+      ['aria2.tellActive', keys],
+      ['aria2.tellWaiting', 0, 10_000, keys]
+    ])) as A2Status[][];
+    return [...(act || []), ...(wait || [])].find((s) => s.infoHash?.toLowerCase() === hash.toLowerCase());
+  }
+
+  /** Points a job at an existing aria2 download and brings its paused/running state in line. */
+  private async adopt(job: Job, s: A2Status, pause: boolean): Promise<void> {
+    const client = this.requireClient();
+    for (const [gid, id] of this.byGid) if (id === job.id) this.byGid.delete(gid);
+    job.gid = s.gid;
+    this.byGid.set(s.gid, job.id);
+    if (pause && s.status !== 'paused') await client.call('aria2.pause', s.gid).catch(() => {});
+    if (!pause && s.status === 'paused') await client.call('aria2.unpause', s.gid).catch(() => {});
+    this.setStatus(job, pause ? 'paused' : 'queued');
+    log.info(`adopted aria2 download ${s.gid} for job ${job.id} by info-hash`);
+  }
+
   /** Adds a job to aria2 (new or re-added). */
   private async submit(job: Job, flags: { continue?: boolean; pause?: boolean }): Promise<void> {
     const client = this.requireClient();
@@ -607,8 +647,19 @@ export class JobManager extends EventEmitter {
 
     let gid: string;
     const remote = isRemote(job.url);
-    if (job.kind === 'torrent' && (!remote || isTorrentUrl(job.url))) {
-      const bytes = await this.torrentBytes(job.url);
+    const fromBytes = job.kind === 'torrent' && (!remote || isTorrentUrl(job.url));
+    const bytes = fromBytes ? await this.torrentBytes(job.url) : undefined;
+    if (job.kind === 'torrent') {
+      job.infoHash ??= bytes ? infoHashFromTorrent(bytes) : infoHashFromMagnet(job.url);
+      // aria2 may already have this torrent (restored from its session under another GID):
+      // take that download over instead of adding a duplicate ("InfoHash … is already registered").
+      const existing = job.infoHash ? await this.findByInfoHash(job.infoHash) : undefined;
+      if (existing) {
+        await this.adopt(job, existing, !!flags.pause);
+        return;
+      }
+    }
+    if (bytes) {
       gid = await client.call<string>('aria2.addTorrent', bytes.toString('base64'), [], o);
     } else if (!remote && job.kind === 'metalink') {
       const b64 = fs.readFileSync(job.url).toString('base64');
@@ -638,6 +689,7 @@ export class JobManager extends EventEmitter {
       const files = s.files.filter((f) => f.selected !== 'false' && f.path && !f.path.startsWith('[METADATA]')).map((f) => path.normalize(f.path)); // aria2 reports C:/... on Windows
       if (files.length) job.files = files;
     }
+    if (job.kind === 'torrent' && s.infoHash) job.infoHash = s.infoHash.toLowerCase();
     if (s.bittorrent?.info?.name) job.title = s.bittorrent.info.name;
     else if (job.kind !== 'torrent' && job.files[0]) {
       job.title = path.basename(job.files[0]);
