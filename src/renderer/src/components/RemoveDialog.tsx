@@ -15,10 +15,11 @@ function joinPath(dir: string, name: string): string {
 
 /**
  * The × on a queue row: "Remove from list" keeps what's on disk;
- * "Delete (partial) file" also moves it to the Recycle Bin. Esc / × / Cancel do nothing.
+ * "Delete (partial) file" also moves it to the Recycle Bin. Esc or the × close it without changes.
  */
 export function RemoveDialog({ job: j, onClose }: Props) {
-  const first = useRef<HTMLButtonElement>(null);
+  // Focus the dialog, not a button: no stray focus ring, and Enter can't trigger a choice by accident.
+  const first = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -70,7 +71,7 @@ export function RemoveDialog({ job: j, onClose }: Props) {
 
   return (
     <div className="overlay">
-      <div role="dialog" aria-modal="true" aria-labelledby="remove-title" className="dialog" style={{ width: 520 }}>
+      <div ref={first} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="remove-title" className="dialog" style={{ width: 480, outline: 'none' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
           <h2 id="remove-title" style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>
             {done ? 'Remove this download?' : 'Stop and remove this download?'}
@@ -131,23 +132,23 @@ export function RemoveDialog({ job: j, onClose }: Props) {
             <b style={{ color: 'var(--text)' }}>{deleteLabel}</b> {deleteText}
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', paddingTop: 4 }}>
-          <button className="btn" onClick={onClose} style={{ height: 40, padding: '0 14px', fontWeight: 500, borderColor: 'transparent', background: 'transparent' }}>
-            Cancel
-          </button>
-          <span className="muted" style={{ fontSize: 12 }}>
-            Esc
-          </span>
-          <div style={{ flex: 1 }} />
-          <button ref={first} className="btn" disabled={busy} onClick={() => void act(false)} style={{ height: 40, padding: '0 16px', fontWeight: 600 }}>
+        {/* Two equal full-width actions (Final Version). Esc and the × above cancel. */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12, paddingTop: 4 }}>
+          <button
+            className="btn"
+            disabled={busy}
+            onClick={() => void act(false)}
+            style={{ height: 44, width: '100%', padding: '0 12px', borderRadius: 10, fontWeight: 600 }}
+          >
             Remove from list
           </button>
           <button
             disabled={busy}
             onClick={() => void act(true)}
             style={{
-              height: 40,
-              padding: '0 18px',
+              height: 44,
+              width: '100%',
+              padding: '0 12px',
               border: 0,
               borderRadius: 10,
               background: 'var(--err)',

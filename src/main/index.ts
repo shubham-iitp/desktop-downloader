@@ -110,6 +110,26 @@ function createWindow() {
   });
   win.webContents.on('will-navigate', (e) => e.preventDefault());
 
+  // Electron has no context menu by default: give text fields the usual Cut / Copy / Paste.
+  win.webContents.on('context-menu', (_e, params) => {
+    const f = params.editFlags;
+    const items: Electron.MenuItemConstructorOptions[] = params.isEditable
+      ? [
+          { role: 'undo', enabled: f.canUndo },
+          { role: 'redo', enabled: f.canRedo },
+          { type: 'separator' },
+          { role: 'cut', enabled: f.canCut },
+          { role: 'copy', enabled: f.canCopy },
+          { role: 'paste', enabled: f.canPaste },
+          { type: 'separator' },
+          { role: 'selectAll', enabled: f.canSelectAll }
+        ]
+      : params.selectionText.trim()
+        ? [{ role: 'copy' }]
+        : [];
+    if (items.length && win) Menu.buildFromTemplate(items).popup({ window: win });
+  });
+
   win.once('ready-to-show', () => {
     if (!startHidden) win?.show();
   });
