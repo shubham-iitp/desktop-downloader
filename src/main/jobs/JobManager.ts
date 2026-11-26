@@ -621,7 +621,7 @@ export class JobManager extends EventEmitter {
       if (s.numSeeders != null) job.seeders = Number(s.numSeeders) || 0;
     }
     if (s.files?.length) {
-      const files = s.files.filter((f) => f.selected !== 'false' && f.path && !f.path.startsWith('[METADATA]')).map((f) => f.path);
+      const files = s.files.filter((f) => f.selected !== 'false' && f.path && !f.path.startsWith('[METADATA]')).map((f) => path.normalize(f.path)); // aria2 reports C:/... on Windows
       if (files.length) job.files = files;
     }
     if (s.bittorrent?.info?.name) job.title = s.bittorrent.info.name;
@@ -663,10 +663,12 @@ export class JobManager extends EventEmitter {
       detail: `aria2 errorCode ${s.errorCode ?? '?'}: ${raw}${tail ? `\n${tail}` : ''}`
     };
     const retries = job.retries ?? 0;
-    if (AUTO_RETRY_CODES.has(code) && retries < RETRY_BACKOFF_MS.length) {
+    // 429 Too Many Requests / 503 Service Unavailable are temporary: back off and retry like network errors.
+    const throttled = code === 'HTTP_ERROR' && /status=(429|503)\b/.test(raw);
+    if ((AUTO_RETRY_CODES.has(code) || throttled) && retries < RETRY_BACKOFF_MS.length) {
       job.retries = retries + 1;
       const wait = RETRY_BACKOFF_MS[retries];
-      this.setError(job, { ...error, message: `Network error · retrying in ${wait >= 60_000 ? `${wait / 60_000} min` : `${wait / 1000} s`}` }, false);
+      this.setError(job, { ...error, message: `${throttled ? 'Server busy' : 'Network error'} · retrying in ${wait >= 60_000 ? `${wait / 60_000} min` : `${wait / 1000} s`}` }, false);
       this.retryTimers.set(
         job.id,
         setTimeout(() => {

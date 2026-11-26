@@ -55,7 +55,7 @@ npm run typecheck
 npm run dist             # installers via electron-builder (NSIS / DMG / AppImage+deb)
 ```
 
-`scripts/fetch-binaries.ts` pins aria2c's version and SHA-256 per platform in `binaries.lock.json`. It downloads only when the binary on disk doesn't match the pin, and refuses mismatches. aria2 publishes an official prebuilt for Windows only. For macOS and Linux, build aria2c statically in CI and add its hashes to the lock file. For local development on those platforms, `ARIA2C_PATH=/path/to/aria2c npm run dev` works in unpackaged builds only.
+`scripts/fetch-binaries.mts` pins aria2c's version and SHA-256 per platform in `binaries.lock.json`. It downloads only when the binary on disk doesn't match the pin, and refuses mismatches. aria2 publishes an official prebuilt for Windows only. For macOS and Linux, build aria2c statically in CI and add its hashes to the lock file. For local development on those platforms, `ARIA2C_PATH=/path/to/aria2c npm run dev` works in unpackaged builds only.
 
 Icons are generated with `node scripts/make-icons.mjs`.
 

@@ -79,6 +79,10 @@ export class Aria2Client {
   }
 
   call<T = unknown>(method: string, ...params: unknown[]): Promise<T> {
+    return this.send<T>(method, [`token:${this.secret}`, ...params]);
+  }
+
+  private send<T>(method: string, params: unknown[]): Promise<T> {
     const ws = this.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) return Promise.reject(new Error('aria2 is not connected'));
     const id = String(++this.seq);
@@ -88,7 +92,7 @@ export class Aria2Client {
         reject(new Error(`aria2 call ${method} timed out`));
       }, 15_000);
       this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer });
-      ws.send(JSON.stringify({ jsonrpc: '2.0', id, method, params: [`token:${this.secret}`, ...params] }));
+      ws.send(JSON.stringify({ jsonrpc: '2.0', id, method, params }));
     });
   }
 
@@ -98,7 +102,8 @@ export class Aria2Client {
       methodName,
       params: [`token:${this.secret}`, ...params]
     }));
-    const res = await this.call<unknown[]>('system.multicall', payload);
+    // system.multicall takes no outer token: each inner call carries its own.
+    const res = await this.send<unknown[]>('system.multicall', [payload]);
     // Each result is [value] on success or a fault object.
     return res.map((r) => (Array.isArray(r) ? r[0] : r));
   }

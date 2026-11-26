@@ -6,7 +6,7 @@
   "main": "out/main/index.js",
   "private": true,
   "scripts": {
-    "fetch-binaries": "node --experimental-strip-types scripts/fetch-binaries.ts",
+    "fetch-binaries": "node --experimental-strip-types scripts/fetch-binaries.mts",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",

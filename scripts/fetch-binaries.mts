@@ -2,9 +2,9 @@
  * Downloads and verifies the pinned aria2c for the current (or given) platform into
  * resources/bin/<platform>-<arch>/. Runs in CI before packaging.
  *
- *   node scripts/fetch-binaries.ts                 # current platform
- *   node scripts/fetch-binaries.ts win32-x64       # a specific target
- *   node scripts/fetch-binaries.ts --update-lock   # record hashes of what was downloaded
+ *   node scripts/fetch-binaries.mts                 # current platform
+ *   node scripts/fetch-binaries.mts win32-x64       # a specific target
+ *   node scripts/fetch-binaries.mts --update-lock   # record hashes of what was downloaded
  *
  * Downloads only when the binary on disk doesn't match the pinned SHA-256.
  * aria2 publishes an official prebuilt for Windows only; macOS/Linux binaries are built
