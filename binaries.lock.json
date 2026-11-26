@@ -1,0 +1,12 @@
+{
+  "version": "1.37.0",
+  "platforms": {
+    "win32-x64": {
+      "url": "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip",
+      "archiveSha256": "",
+      "binary": "aria2-1.37.0-win-64bit-build1/aria2c.exe",
+      "binarySha256": "",
+      "license": "aria2-1.37.0-win-64bit-build1/COPYING"
+    }
+  }
+}

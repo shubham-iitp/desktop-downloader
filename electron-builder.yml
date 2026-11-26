@@ -1,0 +1,47 @@
+appId: com.desktopdownloader.app
+productName: Desktop Downloader
+directories:
+  output: release
+  buildResources: build
+asar: true
+files:
+  - out/**
+  - package.json
+icon: resources/icons/icon.png
+extraResources:
+  # Icons for the tray and notifications.
+  - from: resources/icons
+    to: icons
+# aria2c lives outside the asar (an asar can't be executed from). Folder names use
+# Node's platform names (win32/darwin/linux), so each platform maps its own folder.
+win:
+  target: [nsis]
+  extraResources:
+    - from: resources/bin/win32-${arch}
+      to: bin/win32-${arch}
+  # Sign every bundled .exe too: unsigned helpers trigger SmartScreen/antivirus.
+  signExts: [.exe]
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+mac:
+  target: [dmg, zip]
+  category: public.app-category.utilities
+  hardenedRuntime: true
+  notarize: true
+  extraResources:
+    - from: resources/bin/darwin-${arch}
+      to: bin/darwin-${arch}
+  binaries:
+    - Contents/Resources/bin/darwin-arm64/aria2c
+    - Contents/Resources/bin/darwin-x64/aria2c
+linux:
+  target: [AppImage, deb]
+  category: Network
+  extraResources:
+    - from: resources/bin/linux-${arch}
+      to: bin/linux-${arch}
+publish:
+  provider: github
+  owner: shubham-iitp
+  repo: desktop-downloader

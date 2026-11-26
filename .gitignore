@@ -1,0 +1,15 @@
+node_modules/
+out/
+dist/
+release/
+*.log
+.DS_Store
+Thumbs.db
+
+# Bundled engine binaries are fetched and verified by scripts/fetch-binaries.ts
+resources/bin/*/
+!resources/bin/.gitkeep
+.cache/
+
+.env
+.env.*
