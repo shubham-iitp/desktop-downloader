@@ -60,6 +60,8 @@ export interface Job {
   /** "2 of 3 files" for a partial torrent selection. */
   selectionNote?: string;
   gid?: string;
+  /** Torrents: every file path the torrent can create, selected or not (for Delete). */
+  torrentFiles?: string[];
   /** Torrents: v1 info-hash, used to find the download in aria2 whatever its GID. */
   infoHash?: string;
   /** Name aria2 writes the file as (passed as `out` when the job is re-added). */

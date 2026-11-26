@@ -46,7 +46,7 @@ const notifier = {
   }
 };
 
-const jobs = new JobManager(db, settings, notifier, () => daemon.readLogTail(200), fetchTorrentFile);
+const jobs = new JobManager(db, settings, notifier, () => daemon.readLogTail(200), fetchTorrentFile, (p) => shell.trashItem(p));
 
 const tray = new AppTray({
   show: () => showWindow(),

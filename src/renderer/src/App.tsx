@@ -10,6 +10,7 @@ import { CloseDialog } from './components/CloseDialog';
 import { SettingsView, type SettingsSection } from './components/SettingsView';
 import { RepairView } from './components/RepairView';
 import { LegalNotice } from './components/LegalNotice';
+import { RemoveDialog } from './components/RemoveDialog';
 
 type View = 'main' | 'settings';
 
@@ -24,6 +25,8 @@ export function App() {
   const [closeOpen, setCloseOpen] = useState(false);
   const [openTorrentTick, setOpenTorrentTick] = useState(0);
   const [repair, setRepair] = useState<'none' | 'broken' | 'fixed'>('none');
+  const [removeId, setRemoveId] = useState<string | null>(null);
+  const closeRemove = useCallback(() => setRemoveId(null), []);
 
   useEffect(() => {
     void window.dl.getSettings().then(setSettings);
@@ -163,13 +166,14 @@ export function App() {
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 20, alignItems: 'flex-start', padding: '20px 24px 24px' }}>
               <div style={{ flex: '999 1 560px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <LegalNotice />
-                <Queue tab={tab} jobs={list} density={settings.density} />
+                <Queue tab={tab} jobs={list} density={settings.density} onRemove={(j) => setRemoveId(j.id)} />
               </div>
               <AddPanel key={tab} tab={tab} settings={settings} openTorrentTick={openTorrentTick} />
             </div>
           </div>
         </>
       )}
+      {removeId && jobs.get(removeId) && <RemoveDialog job={jobs.get(removeId)!} onClose={closeRemove} />}
       {closeOpen && (
         <CloseDialog
           active={counts.active}

@@ -1,7 +1,7 @@
 {
   "name": "desktop-downloader",
   "productName": "Desktop Downloader",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Cross-platform download manager built on Electron, with aria2c as its download engine (HTTP/HTTPS/FTP/SFTP, BitTorrent, magnet links, Metalink).",
   "main": "out/main/index.js",
   "private": true,

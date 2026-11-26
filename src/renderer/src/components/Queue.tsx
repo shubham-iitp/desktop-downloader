@@ -8,10 +8,11 @@ interface Props {
   tab: Tab;
   jobs: Job[];
   density: Density;
+  onRemove: (job: Job) => void;
 }
 
 /** The queue for one tab. Runs top to bottom. */
-export function Queue({ tab, jobs, density }: Props) {
+export function Queue({ tab, jobs, density, onRemove }: Props) {
   const rows = jobs.filter((j) => tabOf(j.kind) === tab);
   const done = rows.filter((j) => j.status === 'completed').length;
   // Queue positions are global: aria2's slots are shared by both tabs.
@@ -45,7 +46,7 @@ export function Queue({ tab, jobs, density }: Props) {
         </div>
       )}
       {rows.map((j) => (
-        <JobRow key={j.id} job={j} queuePos={queuedOrder.indexOf(j.id) + 1} compact={density === 'compact'} />
+        <JobRow key={j.id} job={j} queuePos={queuedOrder.indexOf(j.id) + 1} compact={density === 'compact'} onRemove={() => onRemove(j)} />
       ))}
     </>
   );
@@ -61,7 +62,7 @@ const STATUS_COLOR: Record<string, string> = {
   cancelled: 'var(--muted)'
 };
 
-function JobRow({ job: j, queuePos, compact }: { job: Job; queuePos: number; compact: boolean }) {
+function JobRow({ job: j, queuePos, compact, onRemove }: { job: Job; queuePos: number; compact: boolean; onRemove: () => void }) {
   const [copied, setCopied] = useState(false);
   const torrent = j.kind === 'torrent';
   const st = j.status;
@@ -210,8 +211,8 @@ function JobRow({ job: j, queuePos, compact }: { job: Job; queuePos: number; com
           <button
             className="btn icon-btn"
             aria-label="Remove from queue"
-            title={st === 'completed' ? 'Remove from list (keeps the file)' : 'Cancel and delete the partial file'}
-            onClick={() => void window.dl.cancel(j.id, st !== 'completed')}
+            title="Remove…"
+            onClick={onRemove}
           >
             <Close />
           </button>

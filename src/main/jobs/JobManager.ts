@@ -99,7 +99,9 @@ export class JobManager extends EventEmitter {
     private settings: SettingsStore,
     private notifier: Notifier,
     private logTail: () => string,
-    private fetchTorrent: (url: string) => Promise<Buffer>
+    private fetchTorrent: (url: string) => Promise<Buffer>,
+    /** Moves a file to the Recycle Bin / Trash (shell.trashItem in the app). */
+    private trashItem: (p: string) => Promise<void> = async (p) => fs.rmSync(p, { force: true })
   ) {
     super();
   }
@@ -329,7 +331,8 @@ export class JobManager extends EventEmitter {
       updatedAt: now
     };
     if (req.kind === 'torrent' && options.selectFiles?.length && req.probeId) {
-      job.selectionNote = `${options.selectFiles.length} files selected`;
+      const n = options.selectFiles.length;
+      job.selectionNote = `${n} file${n === 1 ? '' : 's'} selected`;
     }
 
     const probeGid = req.probeId ? this.probes.get(req.probeId) : undefined;
@@ -417,7 +420,11 @@ export class JobManager extends EventEmitter {
     return job;
   }
 
-  /** Cancels a job (or removes a finished one from the list). Partial files are deleted on request. */
+  /**
+   * Removes a job from the list, stopping it first if needed. With `deleteFiles`, everything
+   * it wrote goes to the Recycle Bin / Trash: the file(s), the .aria2 resume file, and for
+   * torrents also the unselected files aria2 created because they share pieces with selected ones.
+   */
   async cancel(id: string, deleteFiles: boolean): Promise<void> {
     const job = this.get(id);
     clearTimeout(this.retryTimers.get(id));
@@ -425,20 +432,21 @@ export class JobManager extends EventEmitter {
     const client = this.client;
     let paths = job.files.length ? [...job.files] : job.outName ? [path.join(job.dir, job.outName)] : [];
     if (deleteFiles && job.kind === 'torrent') {
-      // Include unselected files aria2 created because they share pieces with selected ones.
+      let all = job.torrentFiles ?? [];
       if (job.gid && client?.connected) {
-        const all = await client.call<A2File[]>('aria2.getFiles', job.gid).catch(() => [] as A2File[]);
-        paths = [...new Set([...paths, ...all.map((f) => path.normalize(f.path)).filter((p) => p && !p.startsWith('[METADATA]'))])];
+        const live = await client.call<A2File[]>('aria2.getFiles', job.gid).catch(() => [] as A2File[]);
+        all = [...all, ...live.map((f) => path.normalize(f.path)).filter((p) => p && !p.startsWith('[METADATA]'))];
       }
+      paths = [...new Set([...paths, ...all])];
       paths.push(path.join(job.dir, job.title)); // aria2 names the control file after the torrent: <dir>/<name>.aria2
     }
     if (job.gid && client?.connected) {
       await client.call('aria2.forceRemove', job.gid).catch(() => {});
-      await sleep(250);
+      await this.waitStopped(job.gid); // aria2 must release the files before they can be moved
       await client.call('aria2.removeDownloadResult', job.gid).catch(() => {});
       this.byGid.delete(job.gid);
     }
-    if (deleteFiles) removePaths(job.dir, paths);
+    if (deleteFiles) await this.trashPaths(job.dir, paths);
     if (canTransition(job.status, 'cancelled')) job.status = 'cancelled';
     this.jobs.delete(id);
     this.db.deleteJob(id);
@@ -591,6 +599,62 @@ export class JobManager extends EventEmitter {
     }
   }
 
+  /** Polls until aria2 has stopped a download it was told to remove (max ~3 s). */
+  private async waitStopped(gid: string): Promise<void> {
+    const client = this.client;
+    for (let i = 0; i < 15 && client?.connected; i++) {
+      const s = await client.call<A2Status>('aria2.tellStatus', gid, ['status']).catch(() => undefined);
+      if (!s || s.status === 'removed' || s.status === 'complete' || s.status === 'error') return;
+      await sleep(200);
+    }
+  }
+
+  /**
+   * Moves the given files (and their .aria2 resume files) inside `dir` to the Recycle Bin,
+   * then removes folders under `dir` they leave empty. Falls back to deleting a file only
+   * if the trash isn't available (e.g. some network drives).
+   */
+  private async trashPaths(dir: string, paths: string[]): Promise<void> {
+    const root = path.resolve(dir);
+    const dirs = new Set<string>();
+    for (const p of new Set(paths.map((x) => path.resolve(x)))) {
+      if (!p.startsWith(root + path.sep)) continue; // never outside the job's folder
+      for (const f of [p, `${p}.aria2`]) {
+        let isFile = false;
+        try {
+          isFile = fs.statSync(f).isFile();
+        } catch {
+          /* missing */
+        }
+        if (!isFile) continue;
+        let done = false;
+        for (let attempt = 0; attempt < 5 && !done; attempt++) {
+          try {
+            await this.trashItem(f);
+            done = true;
+          } catch {
+            await sleep(300); // the file may still be closing
+          }
+        }
+        if (!done) {
+          try {
+            fs.rmSync(f, { force: true });
+          } catch (e) {
+            log.warn('could not remove', f, e);
+          }
+        }
+      }
+      for (let d = path.dirname(p); d.startsWith(root + path.sep); d = path.dirname(d)) dirs.add(d);
+    }
+    for (const d of [...dirs].sort((a, b) => b.length - a.length)) {
+      try {
+        fs.rmdirSync(d); // only succeeds when empty
+      } catch {
+        /* not empty or missing */
+      }
+    }
+  }
+
   /** A live aria2 download (active / waiting / paused) with this info-hash, if any. */
   private async findByInfoHash(hash: string): Promise<A2Status | undefined> {
     const client = this.requireClient();
@@ -684,6 +748,10 @@ export class JobManager extends EventEmitter {
     if (job.kind === 'torrent') {
       job.peers = Number(s.connections) || 0;
       if (s.numSeeders != null) job.seeders = Number(s.numSeeders) || 0;
+    }
+    if (s.files?.length && job.kind === 'torrent') {
+      const all = s.files.filter((f) => f.path && !f.path.startsWith('[METADATA]')).map((f) => path.normalize(f.path));
+      if (all.length) job.torrentFiles = all;
     }
     if (s.files?.length) {
       const files = s.files.filter((f) => f.selected !== 'false' && f.path && !f.path.startsWith('[METADATA]')).map((f) => path.normalize(f.path)); // aria2 reports C:/... on Windows
