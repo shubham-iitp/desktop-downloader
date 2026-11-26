@@ -8,9 +8,10 @@ interface Props {
   onChoice: (c: CloseChoice) => void;
 }
 
-/** "Close Downloader?" — Hide to tray / Quit / Cancel. Esc and × cancel. */
+/** "Close Downloader?" — Quit / Hide to tray. Esc and the corner × cancel. */
 export function CloseDialog({ active, queued, onChoice }: Props) {
-  const primary = useRef<HTMLButtonElement>(null);
+  // Focus the dialog itself (as in the remove dialog): no stray focus ring on a button.
+  const primary = useRef<HTMLDivElement>(null);
   const n = active + queued;
 
   useEffect(() => {
@@ -25,7 +26,7 @@ export function CloseDialog({ active, queued, onChoice }: Props) {
   const running = n > 0;
   return (
     <div className="overlay">
-      <div role="dialog" aria-modal="true" aria-labelledby="close-title" className="dialog">
+      <div ref={primary} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="close-title" className="dialog" style={{ outline: 'none' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
           <h2 id="close-title" style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>
             Close Downloader?
@@ -83,18 +84,12 @@ export function CloseDialog({ active, queued, onChoice }: Props) {
             <b style={{ color: 'var(--text)' }}>Quit</b> saves the session and stops the engine. Active downloads resume next time you open Downloader.
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', paddingTop: 4 }}>
-          <button className="btn" onClick={() => onChoice('cancel')} style={{ height: 40, padding: '0 14px', fontWeight: 500, borderColor: 'transparent', background: 'transparent' }}>
-            Cancel
-          </button>
-          <span className="muted" style={{ fontSize: 12 }}>
-            Esc
-          </span>
-          <div style={{ flex: 1 }} />
-          <button className="btn" onClick={() => onChoice('quit')} style={{ height: 40, padding: '0 16px', fontWeight: 600 }}>
+        {/* Two equal full-width actions (Final Version). Esc and the × above cancel. */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12, paddingTop: 4 }}>
+          <button className="btn" onClick={() => onChoice('quit')} style={{ height: 44, width: '100%', padding: '0 12px', borderRadius: 10, fontWeight: 600 }}>
             Quit
           </button>
-          <button ref={primary} className="btn-primary" onClick={() => onChoice('hide')} style={{ height: 40, padding: '0 18px' }}>
+          <button className="btn-primary" onClick={() => onChoice('hide')} style={{ height: 44, width: '100%', padding: '0 12px' }}>
             Hide to tray
           </button>
         </div>
