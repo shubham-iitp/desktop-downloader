@@ -50,6 +50,7 @@ export function AddPanel({ tab, settings, openTorrentTick, incoming, onIncomingT
   const [probe, setProbe] = useState<ProbeResult | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [fileQuery, setFileQuery] = useState('');
   const [folder, setFolder] = useState(isT ? settings.dirTorrent : settings.dirNormal);
   const [showHeaders, setShowHeaders] = useState(false);
   const [headersText, setHeadersText] = useState('');
@@ -103,6 +104,7 @@ export function AddPanel({ tab, settings, openTorrentTick, incoming, onIncomingT
     setProbe(p);
     if (p.error && p.error.code !== 'NOT_A_FILE') setFailure(failureOf(tab, p.error));
     if (p.files) setSelected(new Set(p.files.map((f) => f.index)));
+    setFileQuery('');
     if (andAdd && !p.error) await add(p);
   };
 
@@ -190,6 +192,33 @@ export function AddPanel({ tab, settings, openTorrentTick, incoming, onIncomingT
   };
 
   const p = probe;
+
+  // Torrent file picker: search narrows the list; "Select all" acts on what's visible.
+  const fileView = (() => {
+    const all = p?.files ?? [];
+    const q = fileQuery.trim().toLowerCase();
+    const visible = q ? all.filter((f) => f.name.toLowerCase().includes(q)) : all;
+    const allOn = visible.length > 0 && visible.every((f) => selected.has(f.index));
+    const picked = all.filter((f) => selected.has(f.index));
+    const bytes = picked.reduce((n, f) => n + f.size, 0);
+    return {
+      visible,
+      allOn,
+      noMatch: !!q && visible.length === 0,
+      allLabel: q ? `${allOn ? 'Deselect' : 'Select'} ${visible.length} matching` : allOn ? 'Deselect all' : 'Select all',
+      summary: `${picked.length} of ${all.length} selected · ${picked.length ? formatBytes(bytes) : '0 KB'}`,
+      toggleAll: () =>
+        setSelected((s) => {
+          const n = new Set(s);
+          for (const f of visible) {
+            if (allOn) n.delete(f.index);
+            else n.add(f.index);
+          }
+          return n;
+        })
+    };
+  })();
+
   const showFile = !!p && !p.error && (p.kind === 'file' || p.kind === 'metalink');
   const showHtml = !!p && p.error?.code === 'NOT_A_FILE';
   const showTorrentFiles = !!p && !p.error && p.kind === 'torrent' && !!p.files;
@@ -373,13 +402,56 @@ export function AddPanel({ tab, settings, openTorrentTick, incoming, onIncomingT
             {[
               `${p.files!.length} file${p.files!.length === 1 ? '' : 's'}`,
               formatBytes(p.size),
-              p.peers ? `metadata from ${p.peers} peers` : ''
+              p.peers ? `metadata from ${p.peers} connected peer${p.peers === 1 ? '' : 's'}` : ''
             ]
               .filter(Boolean)
               .join(' · ')}
           </div>
-          <div className="scroll" style={{ maxHeight: 220, display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {p.files!.map((f) => (
+          <div style={{ position: 'relative' }}>
+            <label
+              htmlFor="tor-search"
+              style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}
+            >
+              Search files
+            </label>
+            <Search size={13} style={{ position: 'absolute', left: 10, top: 9.5, pointerEvents: 'none', color: 'var(--muted)' }} />
+            <input
+              id="tor-search"
+              className="input"
+              placeholder="Search files"
+              value={fileQuery}
+              onChange={(e) => setFileQuery(e.target.value)}
+              style={{ height: 32, padding: '0 10px 0 30px', fontSize: 12 }}
+            />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none', whiteSpace: 'nowrap' }}>
+              <input
+                type="checkbox"
+                checked={fileView.allOn}
+                disabled={fileView.visible.length === 0}
+                onChange={fileView.toggleAll}
+                aria-label={fileView.allLabel}
+                style={{ accentColor: 'var(--accent)', width: 15, height: 15, margin: 0 }}
+              />
+              {fileView.allLabel}
+            </label>
+            <span
+              className="muted"
+              title={fileView.summary}
+              style={{ fontSize: 12, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+            >
+              {fileView.summary}
+            </span>
+          </div>
+          <div style={{ height: 1, background: 'var(--line)' }} />
+          {fileView.noMatch && (
+            <div className="muted" style={{ fontSize: 12, padding: '4px 0' }}>
+              No files match “{fileQuery.trim()}”.
+            </div>
+          )}
+          <div className="scroll" style={{ maxHeight: 168, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {fileView.visible.map((f) => (
               <label key={f.index} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer' }}>
                 <input
                   type="checkbox"

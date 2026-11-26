@@ -93,7 +93,8 @@ function JobRow({ job: j, queuePos, compact, onRemove }: { job: Job; queuePos: n
           progress,
           j.speed ? formatSpeed(j.speed) : torrent ? (known ? 'Connecting to peers…' : 'Fetching metadata…') : 'Connecting…',
           formatEta(j.eta),
-          torrent && j.peers ? `${j.peers} peers` : '',
+          // aria2's `connections` = peers connected right now; numSeeders = those that have the whole file.
+          torrent && known ? `${j.peers ?? 0} connected (${j.seeders ?? 0} seeding)` : '',
           torrent && j.uploadSpeed ? `↑ ${formatSpeed(j.uploadSpeed)}` : ''
         ]
           .filter(Boolean)
@@ -163,11 +164,11 @@ function JobRow({ job: j, queuePos, compact, onRemove }: { job: Job; queuePos: n
           {st !== 'completed' && (
             <>
               <span className="muted" style={{ fontSize: 12 }}>
-                {torrent ? 'Peers' : 'Connections'}
+                {torrent ? 'Max peers' : 'Connections'}
               </span>
               <div className="stepper">
                 <button
-                  aria-label={torrent ? 'Fewer peers' : 'Fewer connections'}
+                  aria-label={torrent ? 'Lower max peers' : 'Fewer connections'}
                   disabled={j.connections <= lo}
                   onClick={() => void window.dl.setConnections(j.id, Math.max(lo, j.connections - step))}
                 >
@@ -175,7 +176,7 @@ function JobRow({ job: j, queuePos, compact, onRemove }: { job: Job; queuePos: n
                 </button>
                 <span>{j.connections}</span>
                 <button
-                  aria-label={torrent ? 'More peers' : 'More connections'}
+                  aria-label={torrent ? 'Raise max peers' : 'More connections'}
                   disabled={j.connections >= hi}
                   onClick={() => void window.dl.setConnections(j.id, Math.min(hi, j.connections + step))}
                 >
