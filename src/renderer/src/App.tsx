@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
-import type { AppInfo, EngineStatus, Job, JobUpdate, Settings, Tab } from '@shared/types';
+import type { AppInfo, CaptureUpdate, EngineStatus, Job, JobUpdate, Settings, Tab } from '@shared/types';
 import { tabOf } from '@shared/types';
 import { useResolvedTheme } from './hooks';
 import { TitleBar } from './components/TitleBar';
@@ -11,6 +11,8 @@ import { SettingsView, type SettingsSection } from './components/SettingsView';
 import { RepairView } from './components/RepairView';
 import { LegalNotice } from './components/LegalNotice';
 import { RemoveDialog } from './components/RemoveDialog';
+import { VideosPanel } from './components/VideosPanel';
+import { VideosPopup } from './components/VideosPopup';
 
 type View = 'main' | 'settings';
 
@@ -30,6 +32,15 @@ export function App() {
   // A magnet link opened from outside the app (browser click), waiting for the add panel.
   const [incoming, setIncoming] = useState<{ url: string; id: number } | null>(null);
   const takeIncoming = useCallback(() => setIncoming(null), []);
+  // V2: the capture session (browsing, then the "Videos found" popup), and a page to fetch again.
+  const [capture, setCapture] = useState<CaptureUpdate | null>(null);
+  const [videoLink, setVideoLink] = useState('');
+  const [videoBrowser, setVideoBrowser] = useState('');
+  const fetchAgain = useCallback((url: string) => {
+    setView('main');
+    setTab('videos');
+    setVideoLink(url);
+  }, []);
   const receiveLink = useCallback((url: string) => {
     setView('main');
     setTab('torrent');
@@ -52,6 +63,8 @@ export function App() {
       })
     );
     const offEngine = window.dl.onEngineStatus(setEngine);
+    void window.dl.currentCapture().then(setCapture);
+    const offCapture = window.dl.onCapture(setCapture);
     void window.dl.takePendingLink().then((link) => link && receiveLink(link));
     const offLink = window.dl.onOpenLink(receiveLink);
     const offCmd = window.dl.onCommand((c) => {
@@ -66,6 +79,7 @@ export function App() {
     return () => {
       offUpdate();
       offEngine();
+      offCapture();
       offCmd();
       offLink();
     };
@@ -118,13 +132,25 @@ export function App() {
     let queued = 0;
     let torrent = 0;
     let normal = 0;
+    let videos = 0;
+    let videoActive = 0;
+    let videoQueued = 0;
     for (const j of list) {
-      if (j.status === 'active') active++;
-      if (j.status === 'queued') queued++;
-      if (tabOf(j.kind) === 'torrent') torrent++;
+      const t = tabOf(j.kind);
+      if (t === 'torrent') torrent++;
+      else if (t === 'videos') videos++;
       else normal++;
+      // yt-dlp has its own 3 slots; everything else shares aria2's.
+      const busy = j.status === 'active' || j.status === 'postprocessing';
+      if (j.engine === 'ytdlp') {
+        if (busy) videoActive++;
+        if (j.status === 'queued') videoQueued++;
+      } else {
+        if (busy) active++;
+        if (j.status === 'queued') queued++;
+      }
     }
-    return { active, queued, torrent, normal };
+    return { active, queued, torrent, normal, videos, videoActive, videoQueued };
   }, [list]);
 
   if (!settings || !info) return <div className={`app theme-${theme}`} />;
@@ -177,25 +203,49 @@ export function App() {
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 20, alignItems: 'flex-start', padding: '20px 24px 24px' }}>
               <div style={{ flex: '999 1 560px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <LegalNotice />
-                <Queue tab={tab} jobs={list} density={settings.density} onRemove={(j) => setRemoveId(j.id)} />
+                <Queue tab={tab} jobs={list} density={settings.density} onRemove={(j) => setRemoveId(j.id)} onFetchAgain={fetchAgain} />
               </div>
-              <AddPanel
-                key={tab}
-                tab={tab}
-                settings={settings}
-                openTorrentTick={openTorrentTick}
-                incoming={tab === 'torrent' ? incoming : null}
-                onIncomingTaken={takeIncoming}
-              />
+              {tab === 'videos' ? (
+                <VideosPanel
+                  settings={settings}
+                  capture={capture}
+                  link={videoLink}
+                  setLink={setVideoLink}
+                  picked={videoBrowser}
+                  setPicked={setVideoBrowser}
+                />
+              ) : (
+                <AddPanel
+                  key={tab}
+                  tab={tab}
+                  settings={settings}
+                  openTorrentTick={openTorrentTick}
+                  incoming={tab === 'torrent' ? incoming : null}
+                  onIncomingTaken={takeIncoming}
+                />
+              )}
             </div>
           </div>
         </>
       )}
+      {capture && (capture.phase === 'scanning' || capture.phase === 'done') && view === 'main' && (
+        <VideosPopup
+          key={capture.sessionId}
+          capture={capture}
+          settings={settings}
+          onClose={() => void window.dl.discardCapture(capture.sessionId)}
+          onFetchAgain={(url) => {
+            void window.dl.discardCapture(capture.sessionId);
+            fetchAgain(url);
+          }}
+          onAdded={() => setTab('videos')}
+        />
+      )}
       {removeId && jobs.get(removeId) && <RemoveDialog job={jobs.get(removeId)!} onClose={closeRemove} />}
       {closeOpen && (
         <CloseDialog
-          active={counts.active}
-          queued={counts.queued}
+          active={counts.active + counts.videoActive}
+          queued={counts.queued + counts.videoQueued}
           onChoice={(c) => {
             setCloseOpen(false);
             void window.dl.closeChoice(c);

@@ -51,6 +51,14 @@ export function friendlyError(code: ErrorCode, raw?: string): string {
       return 'The download engine stopped';
     case 'FILE_EXISTS':
       return 'A file with this name already exists';
+    case 'LINK_EXPIRED':
+      return 'Link expired, fetch again';
+    case 'FORMAT_UNAVAILABLE':
+      return 'That quality isn’t available any more · fetch the page again';
+    case 'MERGE_FAILED':
+      return 'Couldn’t merge video and audio with ffmpeg · retry';
+    case 'EXTRACTOR':
+      return raw ? `yt-dlp couldn’t download this · ${raw}` : 'yt-dlp couldn’t download this';
     default:
       return raw || 'Download failed';
   }

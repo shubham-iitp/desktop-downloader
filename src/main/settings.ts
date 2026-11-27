@@ -14,6 +14,7 @@ export const settingsSchema = z.object({
   resumeOnLaunch: z.boolean(),
   dirNormal: z.string().min(1).max(4096),
   dirTorrent: z.string().min(1).max(4096),
+  dirVideos: z.string().min(1).max(4096),
   connectionsPerFile: z.number().int().min(1).max(16),
   peersPerTorrent: z.number().int().min(5).max(200),
   ifExists: z.enum(['rename', 'overwrite', 'skip', 'ask']),
@@ -25,10 +26,16 @@ export const settingsSchema = z.object({
   historyKeep: z.enum(['7', '30', '90', 'forever']),
   theme: z.enum(['dark', 'light', 'system']),
   font: z.enum(FONTS),
-  density: z.enum(['comfortable', 'compact'])
+  density: z.enum(['comfortable', 'compact']),
+  captureBrowser: z.string().max(64),
+  customBrowsers: z
+    .array(z.object({ id: z.string().max(64), name: z.string().max(200), path: z.string().min(1).max(4096) }).strict())
+    .max(20)
 });
 
-export const settingsPatchSchema = settingsSchema.partial().strict();
+// customBrowsers are executables the app launches: only capture:addBrowser (after its Chromium
+// check) and capture:removeBrowser change them, never a settings patch from the renderer.
+export const settingsPatchSchema = settingsSchema.omit({ customBrowsers: true }).partial().strict();
 
 export function defaultSettings(): Settings {
   const downloads = app.getPath('downloads');
@@ -39,6 +46,7 @@ export function defaultSettings(): Settings {
     resumeOnLaunch: true,
     dirNormal: downloads,
     dirTorrent: path.join(downloads, 'Torrents'),
+    dirVideos: path.join(downloads, 'Videos'),
     connectionsPerFile: 8,
     peersPerTorrent: 55,
     ifExists: 'rename',
@@ -51,7 +59,9 @@ export function defaultSettings(): Settings {
     historyKeep: '90',
     theme: 'system',
     font: 'Montserrat',
-    density: 'comfortable'
+    density: 'comfortable',
+    captureBrowser: '',
+    customBrowsers: []
   };
 }
 

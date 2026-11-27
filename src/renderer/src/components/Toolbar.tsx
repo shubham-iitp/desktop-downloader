@@ -1,13 +1,16 @@
 import type { CSSProperties } from 'react';
 import type { Tab } from '@shared/types';
-import { LinkIcon, Magnet } from '../icons';
+import { LinkIcon, Magnet, VideoIcon } from '../icons';
 
 interface Props {
   tab: Tab;
   setTab: (t: Tab) => void;
-  counts: { active: number; queued: number; torrent: number; normal: number };
+  counts: { active: number; queued: number; torrent: number; normal: number; videos: number; videoActive: number; videoQueued: number };
   parallel: number;
 }
+
+/** yt-dlp video jobs that run at once (main/ytdlp/runner.ts). */
+const VIDEO_SLOTS = 3;
 
 const tabStyle = (on: boolean): CSSProperties => ({
   display: 'inline-flex',
@@ -23,7 +26,7 @@ const tabStyle = (on: boolean): CSSProperties => ({
   color: on ? 'var(--accentText)' : 'var(--muted)'
 });
 
-/** Torrent / Normal tabs and the slot summary. */
+/** Torrent / Normal / Videos tabs and the slot summary. */
 export function Toolbar({ tab, setTab, counts, parallel }: Props) {
   return (
     <div
@@ -47,10 +50,16 @@ export function Toolbar({ tab, setTab, counts, parallel }: Props) {
           <LinkIcon />
           Normal <span style={{ opacity: 0.75, fontWeight: 500 }}>{counts.normal}</span>
         </button>
+        <button role="tab" aria-selected={tab === 'videos'} onClick={() => setTab('videos')} style={tabStyle(tab === 'videos')}>
+          <VideoIcon />
+          Videos <span style={{ opacity: 0.75, fontWeight: 500 }}>{counts.videos}</span>
+        </button>
       </div>
       {/* Parallel downloads is set in Settings › Downloads & folders (Final Version design). */}
       <span className="muted" style={{ fontSize: 13 }}>
-        {Math.min(counts.active, parallel)} of {parallel} slots busy · {counts.queued} waiting
+        {tab === 'videos'
+          ? `${Math.min(counts.videoActive, VIDEO_SLOTS)} of ${VIDEO_SLOTS} video slots busy · ${counts.videoQueued} waiting`
+          : `${Math.min(counts.active, parallel)} of ${parallel} slots busy · ${counts.queued} waiting`}
       </span>
     </div>
   );

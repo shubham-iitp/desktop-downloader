@@ -2,6 +2,10 @@ import type {
   AddJobRequest,
   AppCommand,
   AppInfo,
+  Browser,
+  CaptureStartError,
+  CaptureUpdate,
+  EnginesStatus,
   CloseChoice,
   EngineStatus,
   Job,
@@ -46,6 +50,21 @@ export interface DownloaderApi {
   onUpdate(cb: (u: JobUpdate[]) => void): () => void;
   onEngineStatus(cb: (s: EngineStatus) => void): () => void;
   onCommand(cb: (c: AppCommand) => void): () => void;
+
+  // V2: Fetch videos
+  browsers(): Promise<Browser[]>;
+  /** File dialog + Chromium check. null = cancelled. */
+  addBrowser(): Promise<Browser | { error: 'NOT_CHROMIUM' } | null>;
+  removeBrowser(id: string): Promise<Settings>;
+  startCapture(url: string, browserId: string): Promise<{ sessionId: string } | { error: CaptureStartError; message?: string }>;
+  endCapture(sessionId: string): Promise<void>;
+  discardCapture(sessionId: string): Promise<void>;
+  currentCapture(): Promise<CaptureUpdate | null>;
+  clearCaptureData(): Promise<boolean>;
+  onCapture(cb: (u: CaptureUpdate | null) => void): () => void;
+  enginesStatus(): Promise<EnginesStatus>;
+  checkYtdlp(): Promise<EnginesStatus>;
+  onEngines(cb: (s: EnginesStatus) => void): () => void;
 }
 
 declare global {

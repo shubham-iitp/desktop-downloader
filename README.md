@@ -1,6 +1,6 @@
 # Desktop Downloader
 
-A cross-platform download manager (Windows, macOS, Linux) built on Electron, with **aria2c** as its only download engine. One queue for direct file links (HTTP/HTTPS/FTP/SFTP), torrents and magnet links, and Metalink.
+A cross-platform download manager (Windows, macOS, Linux) built on Electron. **aria2c** downloads direct file links (HTTP/HTTPS/FTP/SFTP), torrents and magnet links, and Metalink; **yt-dlp** (with ffmpeg and Deno) downloads videos found on web pages.
 
 ## Download (Windows)
 
@@ -13,16 +13,17 @@ The builds aren't code-signed yet, so Windows SmartScreen may warn: **More info 
 
 ## Features
 
-- **Two tabs, one queue.** Torrent (magnet links, `.torrent` files) and Normal (file links, Metalink). aria2's parallel-download slots are shared by both tabs.
+- **Three tabs.** Torrent (magnet links, `.torrent` files) and Normal (file links, Metalink) share aria2's parallel-download slots. Videos has its own 3 yt-dlp slots.
+- **Fetch videos (V2).** Paste a page link and pick a Chromium browser (Chrome, Edge, Brave, Chromium, Vivaldi, or one you add with *Browse…*). The page opens in that browser with an app-owned profile, and the app records media requests (HLS, DASH, video files) over the DevTools protocol while you browse. When you close the browser or click *End session*, *Videos found* opens and fills in as yt-dlp scans every page you visited. DRM-protected and unsupported items are left out. Tick videos and pick a quality for each (Best, 2160p–360p, Audio only M4A/MP3); two qualities of one video become two jobs. Captured files go to aria2 with the browser's headers; everything else goes through yt-dlp, which uses ffmpeg to merge streams or extract audio.
 - **Link check before adding.** Reads the file name, size and resume support. It also catches web pages (`NOT_A_FILE`, with *Download anyway*), 404s, sign-in walls (add cookie/Authorization headers, stored encrypted) and timeouts.
 - **Torrent file picker.** Torrents are added paused, their file list is read, and only the files you pick are downloaded.
 - **Fast, resumable downloads.** Files are split into up to 16 parts, and paused or unfinished downloads resume after a restart through aria2's session file and `.aria2` control files.
 - **Per-row controls.** Connections (or peers) stepper, pause/resume, open folder, remove, and retry plus *Copy details* on a failure. Network errors retry 3× automatically (5 s, 30 s, 2 min).
 - **Close button asks:** *Hide to tray* (downloads keep running), *Quit* (saves the session and stops aria2c) or *Cancel*. Tray Quit and Ctrl+Q / ⌘Q quit without asking.
-- **Settings.** General, Downloads & folders, Download engine (speed and upload limits, seeding, history) and Appearance (Dark / Light / System theme, 10 fonts, compact density).
+- **Settings.** General, Downloads & folders, Engines (aria2c, yt-dlp, ffmpeg, Deno; speed and upload limits, seeding, history), Video capture (default browser, added browsers, *Clear capture browser data*) and Appearance (Dark / Light / System theme, 10 fonts, compact density).
 - **Repair screen** if aria2c is missing, blocked by antivirus, or keeps crashing.
 
-The UI follows the *Final Version* page of the design: Montserrat, red primary, light and dark.
+The UI follows the *Final Version* (V1) and *V2* pages of the design: Montserrat, red primary, light and dark.
 
 ## Architecture
 
@@ -46,6 +47,8 @@ main process: ipc.ts (zod-validated) → JobManager (single source of truth, SQL
 | `src/main/probe.ts`, `probeParse.ts` | HEAD / ranged-GET link check via `net.fetch` (system proxy and certificates) |
 | `src/main/db.ts` | SQLite store (jobs, settings); custom headers encrypted with `safeStorage` |
 | `src/main/ipc.ts` | IPC handlers with zod schemas and sender-origin checks |
+| `src/main/capture/` | Fetch videos: browser detection and the *Browse…* check (`browsers.ts`), the capture session over CDP with puppeteer-core (`session.ts`), response classification, HLS/DASH DRM filters and quality lists (`classify.ts`) |
+| `src/main/ytdlp/` | yt-dlp scans, versions and the daily verified self-update (`ytdlp.ts`), and the video job runner, 3 at a time (`runner.ts`) |
 | `src/shared/` | Types, job state machine, aria2 error mapping, speed-limit mapping |
 | `src/renderer/` | React UI |
 
@@ -64,7 +67,7 @@ npm run typecheck
 npm run dist             # installers via electron-builder (NSIS / DMG / AppImage+deb)
 ```
 
-`scripts/fetch-binaries.mts` pins aria2c's version and SHA-256 per platform in `binaries.lock.json`. It downloads only when the binary on disk doesn't match the pin, and refuses mismatches. aria2 publishes an official prebuilt for Windows only. For macOS and Linux, build aria2c statically in CI and add its hashes to the lock file. For local development on those platforms, `ARIA2C_PATH=/path/to/aria2c npm run dev` works in unpackaged builds only.
+`scripts/fetch-binaries.mts` pins the version and SHA-256 of aria2c, yt-dlp, ffmpeg/ffprobe and Deno per platform in `binaries.lock.json` (yt-dlp and Deno are also checked against their published checksums). It downloads only when the binary on disk doesn't match the pin, and refuses mismatches. aria2 publishes an official prebuilt for Windows only. For macOS and Linux, build aria2c statically in CI and add its hashes to the lock file. For local development on those platforms, `ARIA2C_PATH=/path/to/aria2c npm run dev` works in unpackaged builds only.
 
 Icons are generated with `node scripts/make-icons.mjs`.
 

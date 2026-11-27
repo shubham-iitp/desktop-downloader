@@ -41,7 +41,19 @@ const api: DownloaderApi = {
   closeWindow: () => ipcRenderer.invoke('win:close'),
   onUpdate: on('job:update'),
   onEngineStatus: on('engine:status'),
-  onCommand: on('app:command')
+  onCommand: on('app:command'),
+  browsers: () => ipcRenderer.invoke('capture:browsers'),
+  addBrowser: () => ipcRenderer.invoke('capture:addBrowser'),
+  removeBrowser: (id) => ipcRenderer.invoke('capture:removeBrowser', id),
+  startCapture: (url, browserId) => ipcRenderer.invoke('capture:start', { url, browserId }),
+  endCapture: (sid) => ipcRenderer.invoke('capture:end', sid),
+  discardCapture: (sid) => ipcRenderer.invoke('capture:discard', sid),
+  currentCapture: () => ipcRenderer.invoke('capture:current'),
+  clearCaptureData: () => ipcRenderer.invoke('capture:clearData'),
+  onCapture: on('capture:update'),
+  enginesStatus: () => ipcRenderer.invoke('engines:status'),
+  checkYtdlp: () => ipcRenderer.invoke('engines:checkYtdlp'),
+  onEngines: on('engines:update')
 };
 
 contextBridge.exposeInMainWorld('dl', api);

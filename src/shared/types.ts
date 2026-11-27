@@ -1,11 +1,15 @@
 // Types shared by the main process, the preload bridge and the renderer.
 
-export type JobKind = 'file' | 'torrent' | 'metalink';
-export type JobStatus = 'probing' | 'queued' | 'active' | 'paused' | 'completed' | 'error' | 'cancelled';
+export type JobKind = 'file' | 'torrent' | 'metalink' | 'media';
+/** `postprocessing` = ffmpeg merging or extracting audio, yt-dlp jobs only. */
+export type JobStatus = 'probing' | 'queued' | 'active' | 'postprocessing' | 'paused' | 'completed' | 'error' | 'cancelled';
 
 /** Which tab of the main window a job belongs to. */
-export type Tab = 'torrent' | 'normal';
-export const tabOf = (kind: JobKind): Tab => (kind === 'torrent' ? 'torrent' : 'normal');
+export type Tab = 'torrent' | 'normal' | 'videos';
+export const tabOf = (kind: JobKind): Tab => (kind === 'torrent' ? 'torrent' : kind === 'media' ? 'videos' : 'normal');
+
+/** Which program downloads a job. Everything except yt-dlp video jobs runs through aria2. */
+export type Engine = 'aria2' | 'ytdlp';
 
 export type ErrorCode =
   | 'NOT_A_FILE'
@@ -18,6 +22,10 @@ export type ErrorCode =
   | 'CHECKSUM_FAILED'
   | 'ENGINE_CRASH'
   | 'FILE_EXISTS'
+  | 'LINK_EXPIRED'
+  | 'FORMAT_UNAVAILABLE'
+  | 'MERGE_FAILED'
+  | 'EXTRACTOR'
   | 'UNKNOWN';
 
 export interface JobError {
@@ -67,11 +75,33 @@ export interface Job {
   /** Name aria2 writes the file as (passed as `out` when the job is re-added). */
   outName?: string;
   options: JobOptions;
+  /** Video jobs: which engine runs it (missing = aria2). */
+  engine?: Engine;
+  media?: MediaSpec;
+  /** While postprocessing: what ffmpeg is doing ("Merging video and audio…"). */
+  postNote?: string;
   error?: JobError;
   retries?: number;
   createdAt: number;
   updatedAt: number;
   completedAt?: number;
+}
+
+/** How a video job was found and which version of it was picked. */
+export interface MediaSpec {
+  source: 'ytdlp' | 'captured';
+  /** Stream type the job downloads. */
+  type: 'ytdlp' | 'hls' | 'dash' | 'progressive';
+  /** Quality key from the popup: best, 2160 … 360, m4a, mp3, file, or a captured variant's height. */
+  quality: string;
+  /** Page the video was found on, re-scanned once if a captured link has expired. */
+  pageUrl?: string;
+  /** Netscape cookies.txt from the capture session, for yt-dlp. */
+  cookieFile?: string;
+  /** True once the source page was re-scanned after a 403. */
+  rescanned?: boolean;
+  /** yt-dlp jobs: true after the one automatic retry for "format unavailable". */
+  formatRetried?: boolean;
 }
 
 export interface TorrentFile {
@@ -112,6 +142,89 @@ export interface AddJobRequest {
   options?: JobOptions;
   /** Set by the "Download anyway" / "Add anyway" overrides. */
   force?: boolean;
+  /** kind 'media': the popup row and quality. The main process looks up the URL and headers itself. */
+  media?: { sessionId: string; itemId: string; quality: string };
+}
+
+// ---------------------------------------------------------------- V2: video capture
+
+/** A Chromium-based browser Fetch videos can launch. */
+export interface Browser {
+  id: string;
+  name: string;
+  path: string;
+  /** Added by the user with Browse… (verified, saved in settings). */
+  custom: boolean;
+  /** The browser's own icon as a data: URL, when it could be read. */
+  icon?: string;
+}
+
+export interface CustomBrowser {
+  id: string;
+  name: string;
+  path: string;
+}
+
+export interface QualityOption {
+  key: string;
+  label: string;
+  /** "48 MB", "~210 MB", or '' when unknown. */
+  size: string;
+}
+
+/** One downloadable video in the "Videos found" popup. */
+export interface CaptureItem {
+  id: string;
+  title: string;
+  /** "youtube.com · found on keebblog.example.com/switch-roundup" */
+  source: string;
+  /** Seconds, if known. */
+  duration?: number;
+  /** data: URL (the renderer loads nothing remote). */
+  thumbnail?: string;
+  type: 'ytdlp' | 'hls' | 'dash' | 'progressive';
+  qualities: QualityOption[];
+  defaultQuality: string;
+}
+
+export interface VisitedPage {
+  url: string;
+  /** "yt-dlp: 2 videos", "HLS seen", "yt-dlp after session" */
+  tag: string;
+  ok: boolean;
+}
+
+export type CapturePhase = 'starting' | 'browsing' | 'scanning' | 'done';
+
+export interface CaptureUpdate {
+  sessionId: string;
+  phase: CapturePhase;
+  /** The link the session was started on. */
+  url: string;
+  browserId: string;
+  browserName: string;
+  pages: VisitedPage[];
+  mediaSeen: number;
+  progress: { done: number; total: number };
+  items: CaptureItem[];
+  /** Set when the session couldn't start. */
+  error?: string;
+}
+
+export type CaptureStartError = 'NO_BROWSER' | 'NO_START' | 'BUSY' | 'BAD_URL';
+
+export interface EngineInfo {
+  name: string;
+  version: string;
+  source: 'Bundled' | 'Updated copy';
+  ready: boolean;
+  path: string;
+}
+
+export interface EnginesStatus {
+  ytdlp: EngineInfo & { checking: boolean; note: string };
+  ffmpeg: EngineInfo;
+  deno: EngineInfo;
 }
 
 export interface JobUpdate {
@@ -152,6 +265,7 @@ export interface Settings {
   // Downloads & folders
   dirNormal: string;
   dirTorrent: string;
+  dirVideos: string;
   connectionsPerFile: number;
   peersPerTorrent: number;
   ifExists: ExistsPolicy;
@@ -166,6 +280,10 @@ export interface Settings {
   theme: ThemeMode;
   font: FontName;
   density: Density;
+  // Video capture
+  /** Default browser id for Fetch videos ('' = the first one found). */
+  captureBrowser: string;
+  customBrowsers: CustomBrowser[];
 }
 
 export type EngineState = 'starting' | 'running' | 'restarting' | 'missing' | 'crashed';

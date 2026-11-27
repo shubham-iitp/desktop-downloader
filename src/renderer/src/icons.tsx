@@ -150,3 +150,21 @@ export const WinClose = ({ w = 1 }: { w?: number }) => (
     <path d="M0 0l10 10M10 0 0 10" stroke="currentColor" strokeWidth={w} />
   </svg>
 );
+/** Screen with a play triangle: the Videos tab and Fetch videos. */
+export const VideoIcon = ({ size = 16, ...p }: P) => (
+  <svg {...base(size, p)}>
+    <rect x="3" y="5" width="18" height="14" rx="3" />
+    <path d="m10 9 5 3-5 3z" fill="currentColor" />
+  </svg>
+);
+export const PlayFilled = ({ size = 22, ...p }: P) => (
+  <svg {...base(size, p)} stroke="none" fill="rgba(255,255,255,0.9)">
+    <path d="M8 5v14l11-7z" />
+  </svg>
+);
+export const NoVideo = ({ size = 36, ...p }: P) => (
+  <svg {...base(size, p)} strokeWidth={1.6}>
+    <rect x="3" y="5" width="18" height="14" rx="3" />
+    <path d="M3 3l18 18" />
+  </svg>
+);

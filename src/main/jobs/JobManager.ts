@@ -23,6 +23,9 @@ import { globalAria2Options, type SettingsStore } from '../settings';
 import { sanitizeFilename } from '../probeParse';
 import { log } from '../log';
 import { infoHashFromMagnet, infoHashFromTorrent } from '../torrentHash';
+import { MediaRunner } from '../ytdlp/runner';
+import { qualityExt, qualityTag, ytdlpQualities, type YtInfo } from '../capture/classify';
+import type { ResolvedItem } from '../capture/session';
 
 interface A2File {
   index: string;
@@ -72,6 +75,25 @@ export class AppError extends Error {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const isRemote = (url: string) => /^(https?|s?ftp|magnet):/i.test(url);
 const isTorrentUrl = (url: string) => /^https?:\/\//i.test(url) && /\.torrent$/i.test(url.split(/[?#]/)[0]);
+const isVideo = (j: Job) => j.engine === 'ytdlp';
+/** Statuses that hold a download slot. */
+const running = (s: JobStatus) => s === 'active' || s === 'postprocessing';
+
+/** Extra services video jobs need: re-scanning a page after a 403, and a yt-dlp update check. */
+export interface MediaServices {
+  rescan(pageUrl: string, cookieFile?: string): Promise<YtInfo[]>;
+  checkYtdlp(): void;
+  /** True while a capture session (or its open popup) still writes or needs this cookies file. */
+  cookieInUse(file: string): boolean;
+}
+
+/** "~210 MB" / "48 MB" / "1.6 GB" from a popup quality option, in bytes. */
+function parseSize(s: string): number | null {
+  const m = s.match(/([\d.]+)\s*(B|KB|MB|GB|TB)/i);
+  if (!m) return null;
+  const mult = { B: 1, KB: 1e3, MB: 1e6, GB: 1e9, TB: 1e12 }[m[2].toUpperCase() as 'B'];
+  return Math.round(parseFloat(m[1]) * mult);
+}
 
 /**
  * Owns every job and maps each to an aria2 GID. aria2 reports into it; the renderer
@@ -93,6 +115,8 @@ export class JobManager extends EventEmitter {
   /** Local .torrent / .metalink paths the user picked through a native dialog. */
   readonly allowedLocal = new Set<string>();
   private firstAttach = true;
+  private media: MediaRunner;
+  private services?: MediaServices;
 
   constructor(
     private db: Db,
@@ -104,6 +128,38 @@ export class JobManager extends EventEmitter {
     private trashItem: (p: string) => Promise<void> = async (p) => fs.rmSync(p, { force: true })
   ) {
     super();
+    this.media = new MediaRunner({
+      list: () => this.list(),
+      progress: (job) => this.markDirty(job),
+      started: (job) => this.setStatus(job, 'active'),
+      postprocessing: (job, note) => {
+        job.postNote = note;
+        job.speed = 0;
+        job.eta = null;
+        this.setStatus(job, 'postprocessing');
+        this.markDirty(job, true);
+      },
+      finished: (job, file) => {
+        job.postNote = undefined;
+        if (file) {
+          job.files = [file];
+          job.title = path.basename(file);
+          job.outName = job.title;
+        }
+        if (job.doneBytes) job.totalBytes = Math.max(job.totalBytes ?? 0, job.doneBytes);
+        this.complete(job);
+      },
+      failed: (job, code, message, detail) => void this.failVideo(job, code, message, detail)
+    });
+  }
+
+  setMediaServices(m: MediaServices): void {
+    this.services = m;
+  }
+
+  /** Starts video jobs (they don't wait for aria2). */
+  startMedia(): void {
+    this.media.schedule();
   }
 
   // ---------------------------------------------------------------- lifecycle
@@ -111,7 +167,9 @@ export class JobManager extends EventEmitter {
   load(): void {
     for (const job of this.db.loadJobs()) {
       if (job.status === 'probing') continue;
-      if (job.status === 'active') job.status = 'queued'; // until reconciled with aria2
+      if (job.status === 'active' || job.status === 'postprocessing') job.status = 'queued'; // until reconciled / re-run
+      if (isVideo(job) && job.status === 'queued' && !this.settings.get().resumeOnLaunch) job.status = 'paused';
+      job.postNote = undefined;
       job.speed = 0;
       job.uploadSpeed = 0;
       job.eta = null;
@@ -152,6 +210,9 @@ export class JobManager extends EventEmitter {
   async shutdown(): Promise<void> {
     for (const t of this.retryTimers.values()) clearTimeout(t);
     if (this.pollTimer) clearInterval(this.pollTimer);
+    // yt-dlp jobs resume from their .part files next launch.
+    await this.media.shutdown();
+    for (const j of this.jobs.values()) if (isVideo(j) && running(j.status)) j.status = 'queued';
     await this.clearProbes();
     const client = this.client;
     if (client?.connected) {
@@ -177,7 +238,7 @@ export class JobManager extends EventEmitter {
     let active = 0;
     let queued = 0;
     for (const j of this.jobs.values()) {
-      if (j.status === 'active') active++;
+      if (running(j.status)) active++;
       else if (j.status === 'queued') queued++;
     }
     return { active, queued };
@@ -286,7 +347,7 @@ export class JobManager extends EventEmitter {
   async add(req: AddJobRequest): Promise<Job> {
     const s = this.settings.get();
     const tab = tabOf(req.kind);
-    const dir = path.resolve(req.dir || (tab === 'torrent' ? s.dirTorrent : s.dirNormal));
+    const dir = path.resolve(req.dir || (tab === 'torrent' ? s.dirTorrent : tab === 'videos' ? s.dirVideos : s.dirNormal));
     try {
       fs.mkdirSync(dir, { recursive: true });
       fs.accessSync(dir, fs.constants.W_OK);
@@ -375,6 +436,12 @@ export class JobManager extends EventEmitter {
   async pause(id: string): Promise<Job> {
     const job = this.get(id);
     if (job.status !== 'active' && job.status !== 'queued') return job;
+    if (isVideo(job)) {
+      await this.media.stop(job.id);
+      this.setStatus(job, 'paused');
+      this.media.schedule();
+      return job;
+    }
     if (job.gid && this.client?.connected) {
       await this.client.call('aria2.pause', job.gid).catch(() => this.client?.call('aria2.forcePause', job.gid!).catch(() => {}));
     }
@@ -385,6 +452,11 @@ export class JobManager extends EventEmitter {
   async resume(id: string): Promise<Job> {
     const job = this.get(id);
     if (job.status !== 'paused') return job;
+    if (isVideo(job)) {
+      this.setStatus(job, 'queued');
+      this.media.schedule();
+      return job;
+    }
     const client = this.requireClient();
     let ok = false;
     if (job.gid) ok = await client.call('aria2.unpause', job.gid).then(() => true, () => false);
@@ -395,7 +467,7 @@ export class JobManager extends EventEmitter {
   }
 
   async pauseAll(): Promise<void> {
-    for (const j of this.list()) if (j.status === 'active' || j.status === 'queued') await this.pause(j.id);
+    for (const j of this.list()) if (j.status === 'active' || j.status === 'queued') await this.pause(j.id).catch(() => {});
   }
 
   async resumeAll(): Promise<void> {
@@ -407,6 +479,13 @@ export class JobManager extends EventEmitter {
     if (job.status !== 'error') return job;
     clearTimeout(this.retryTimers.get(id));
     this.retryTimers.delete(id);
+    if (isVideo(job)) {
+      if (!auto) job.retries = 0;
+      job.error = undefined;
+      this.setStatus(job, 'queued');
+      this.media.schedule();
+      return job;
+    }
     const client = this.requireClient();
     if (job.gid) {
       this.byGid.delete(job.gid);
@@ -432,6 +511,11 @@ export class JobManager extends EventEmitter {
     this.retryTimers.delete(id);
     const client = this.client;
     let paths = job.files.length ? [...job.files] : job.outName ? [path.join(job.dir, job.outName)] : [];
+    if (isVideo(job)) {
+      await this.media.stop(job.id);
+      // yt-dlp's leftovers: Title [720p].f137.mp4.part, Title [720p].mp4.ytdl, Title [720p].temp.mp4 …
+      if (deleteFiles && job.status !== 'completed') paths = [...paths, ...videoPartials(job)];
+    }
     if (deleteFiles && job.kind === 'torrent') {
       let all = job.torrentFiles ?? [];
       if (job.gid && client?.connected) {
@@ -453,7 +537,9 @@ export class JobManager extends EventEmitter {
     this.jobs.delete(id);
     this.db.deleteJob(id);
     this.removedIds.add(id);
+    this.releaseCookies(job);
     this.scheduleFlush();
+    if (isVideo(job)) this.media.schedule();
   }
 
   async clearCompleted(tab: Tab): Promise<void> {
@@ -462,6 +548,7 @@ export class JobManager extends EventEmitter {
 
   async setConnections(id: string, n: number): Promise<Job> {
     const job = this.get(id);
+    if (isVideo(job)) return job; // yt-dlp picks its own connections
     const torrent = job.kind === 'torrent';
     const value = torrent ? Math.max(5, Math.min(200, n)) : Math.max(1, Math.min(job.resumable ? 16 : 1, n));
     job.connections = value;
@@ -485,6 +572,153 @@ export class JobManager extends EventEmitter {
       await this.client.call('aria2.changeGlobalOption', changed).catch((e) => log.warn('changeGlobalOption', e));
     }
     if (prev.historyKeep !== next.historyKeep) this.pruneHistory();
+  }
+
+  // ---------------------------------------------------------------- video jobs (V2)
+
+  /**
+   * One popup row at one quality becomes one job, so two qualities of a video are two jobs.
+   * yt-dlp entries and captured HLS / DASH run through yt-dlp; a captured progressive file
+   * goes to aria2 with the captured headers, so it gets a segmented multi-connection download.
+   */
+  async addMedia(item: ResolvedItem, quality: string, dirIn?: string): Promise<Job> {
+    const s = this.settings.get();
+    const dir = path.resolve(dirIn || s.dirVideos);
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.accessSync(dir, fs.constants.W_OK);
+    } catch {
+      throw new AppError('DISK_ERROR', `Can't write to ${dir}. Pick another folder.`);
+    }
+    const q = item.qualities.find((o) => o.key === quality);
+    if (!q) throw new AppError('FORMAT_UNAVAILABLE', 'That quality isn’t offered for this video.');
+    const dup = [...this.jobs.values()].find((j) => j.url === item.url && j.media?.quality === q.key && j.status !== 'completed');
+    if (dup) throw new AppError('FILE_EXISTS', `This video is already in your queue as “${dup.title}”.`);
+
+    const captured = item.type !== 'ytdlp';
+    const aria2 = item.type === 'progressive';
+    const ext = aria2 ? item.ext || 'mp4' : qualityExt(q.key);
+    const name = `${sanitizeFilename(`${item.title}${qualityTag(q.key, q.label)}`) || 'video'}.${ext}`;
+    const now = Date.now();
+    const job: Job = {
+      id: crypto.randomUUID(),
+      kind: 'media',
+      url: item.url,
+      title: name,
+      outName: name,
+      status: 'queued',
+      dir,
+      files: [],
+      totalBytes: parseSize(q.size) ?? item.size ?? null,
+      doneBytes: 0,
+      speed: 0,
+      uploadSpeed: 0,
+      eta: null,
+      connections: aria2 ? s.connectionsPerFile : 1,
+      resumable: true,
+      host: hostOf(item.type === 'ytdlp' ? item.url : item.pageUrl || item.url),
+      engine: aria2 ? 'aria2' : 'ytdlp',
+      media: { source: captured ? 'captured' : 'ytdlp', type: item.type, quality: q.key, pageUrl: item.pageUrl, cookieFile: item.cookieFile },
+      options: captured && item.headers.length ? { headers: item.headers } : {},
+      createdAt: now,
+      updatedAt: now
+    };
+    this.jobs.set(job.id, job);
+    if (aria2) {
+      try {
+        await this.submit(job, {});
+      } catch (e) {
+        this.jobs.delete(job.id);
+        if (job.gid) this.byGid.delete(job.gid);
+        throw e;
+      }
+      this.ensurePolling();
+    }
+    this.markDirty(job, true);
+    if (!aria2) this.media.schedule();
+    return job;
+  }
+
+  private failVideo(job: Job, code: ErrorCode, message: string, detail: string): void {
+    if (!this.jobs.has(job.id)) return;
+    job.postNote = undefined;
+    const m = job.media;
+    if (code === 'LINK_EXPIRED' && m?.source === 'captured') {
+      void this.expired(job, detail);
+      return;
+    }
+    if (code === 'LINK_EXPIRED') code = 'EXTRACTOR';
+    // Format unavailable: yt-dlp re-reads the page on every run, so one retry is a re-fetch.
+    if (code === 'FORMAT_UNAVAILABLE' && m && !m.formatRetried) {
+      m.formatRetried = true;
+      this.setStatus(job, 'queued');
+      this.media.schedule();
+      return;
+    }
+    const retries = job.retries ?? 0;
+    const error: JobError = { code, message: friendlyError(code, code === 'EXTRACTOR' ? message.slice(0, 160) : undefined), detail };
+    if (code === 'NETWORK' && retries < RETRY_BACKOFF_MS.length) {
+      job.retries = retries + 1;
+      const wait = RETRY_BACKOFF_MS[retries];
+      this.setError(job, { ...error, message: `Network error · retrying in ${wait >= 60_000 ? `${wait / 60_000} min` : `${wait / 1000} s`}` }, false);
+      this.retryTimers.set(
+        job.id,
+        setTimeout(() => {
+          this.retryTimers.delete(job.id);
+          void this.retry(job.id, true).catch((e) => log.warn('auto retry failed', e));
+        }, wait)
+      );
+      return;
+    }
+    if (code === 'EXTRACTOR') this.services?.checkYtdlp();
+    this.setError(job, error);
+  }
+
+  /**
+   * A captured link answered 403: signed URLs expire within hours. If the page it came from is
+   * known, re-scan it once with yt-dlp and download from there; otherwise "Link expired, fetch again".
+   */
+  private async expired(job: Job, detail: string): Promise<void> {
+    const m = job.media;
+    if (m?.pageUrl && !m.rescanned && this.services) {
+      m.rescanned = true;
+      this.setError(job, { code: 'LINK_EXPIRED', message: 'Link expired · fetching the page again…', detail }, false);
+      this.markDirty(job, true);
+      try {
+        const infos = await this.services.rescan(m.pageUrl, m.cookieFile);
+        const entry = infos.find((i) => ytdlpQualities(i).length);
+        const link = entry && (entry.webpage_url || entry.original_url || entry.url);
+        if (link && this.jobs.has(job.id)) {
+          if (job.gid) {
+            this.byGid.delete(job.gid);
+            await this.client?.call('aria2.removeDownloadResult', job.gid).catch(() => {});
+            job.gid = undefined;
+          }
+          job.url = link;
+          job.engine = 'ytdlp';
+          job.media = { ...m, source: 'ytdlp', type: 'ytdlp', quality: /^\d+$/.test(m.quality) || m.quality === 'm4a' || m.quality === 'mp3' ? m.quality : 'best' };
+          job.options = { ...job.options, headers: undefined };
+          job.error = undefined;
+          this.setStatus(job, 'queued');
+          this.markDirty(job, true);
+          this.media.schedule();
+          return;
+        }
+      } catch (e) {
+        log.warn('re-scan after 403 failed', e);
+      }
+    }
+    if (!this.jobs.has(job.id)) return;
+    this.setError(job, { code: 'LINK_EXPIRED', message: friendlyError('LINK_EXPIRED'), detail });
+    this.markDirty(job, true);
+  }
+
+  /** Deletes a session's cookies.txt once no unfinished job needs it (tech doc: V2 security). */
+  private releaseCookies(job: Job): void {
+    const f = job.media?.cookieFile;
+    if (!f || this.services?.cookieInUse(f)) return;
+    const still = [...this.jobs.values()].some((j) => j.id !== job.id && j.media?.cookieFile === f && j.status !== 'completed');
+    if (!still) fs.rmSync(f, { force: true });
   }
 
   // ---------------------------------------------------------------- aria2 events
@@ -560,6 +794,7 @@ export class JobManager extends EventEmitter {
     const claimed = new Set<string>();
 
     for (const job of this.list()) {
+      if (isVideo(job)) continue; // yt-dlp jobs never touch aria2
       const live = job.status === 'queued' || job.status === 'active' || job.status === 'paused';
       const s = job.gid ? known.get(job.gid) : undefined;
       if (!live) {
@@ -686,7 +921,7 @@ export class JobManager extends EventEmitter {
     const client = this.requireClient();
     const s = this.settings.get();
     const o: Record<string, string | string[]> = { dir: job.dir };
-    if (job.kind === 'file' && job.outName) o.out = job.outName;
+    if ((job.kind === 'file' || job.kind === 'media') && job.outName) o.out = job.outName;
     if (job.kind === 'torrent') {
       o['bt-max-peers'] = String(job.connections);
       // Existing data (e.g. files kept from an earlier download) is hash-checked and reused.
@@ -737,6 +972,8 @@ export class JobManager extends EventEmitter {
     }
     job.gid = gid;
     this.byGid.set(gid, job.id);
+    // Captured links are signed and expire within hours: they go to the top of the queue.
+    if (job.media?.source === 'captured') await client.call('aria2.changePosition', gid, 0, 'POS_SET').catch(() => {});
     this.setStatus(job, flags.pause ? 'paused' : 'queued');
   }
 
@@ -764,7 +1001,7 @@ export class JobManager extends EventEmitter {
     if (s.bittorrent?.info?.name) job.title = s.bittorrent.info.name;
     else if (job.kind !== 'torrent' && job.files[0]) {
       job.title = path.basename(job.files[0]);
-      if (job.kind === 'file') job.outName = job.title;
+      if (job.kind === 'file' || job.kind === 'media') job.outName = job.title;
     }
     if (job.status !== 'completed') {
       const next: JobStatus | undefined =
@@ -783,6 +1020,7 @@ export class JobManager extends EventEmitter {
     job.completedAt = Date.now();
     this.setStatus(job, 'completed');
     if (this.settings.get().notifyDone) this.notifier.done(job);
+    if (job.kind === 'media') this.releaseCookies(job);
   }
 
   private fail(job: Job, s: A2Status): void {
@@ -799,6 +1037,10 @@ export class JobManager extends EventEmitter {
       message: friendlyError(code, raw),
       detail: `aria2 errorCode ${s.errorCode ?? '?'}: ${raw}${tail ? `\n${tail}` : ''}`
     };
+    if (job.media?.source === 'captured' && /status=(403|410)\b/.test(raw)) {
+      void this.expired(job, error.detail ?? raw);
+      return;
+    }
     const retries = job.retries ?? 0;
     // 429 Too Many Requests / 503 Service Unavailable are temporary: back off and retry like network errors.
     const throttled = code === 'HTTP_ERROR' && /status=(429|503)\b/.test(raw);
@@ -870,7 +1112,7 @@ export class JobManager extends EventEmitter {
   private async poll(): Promise<void> {
     const client = this.client;
     const live = [...this.jobs.values()].some(
-      (j) => j.status === 'active' || j.status === 'queued' || (j.status === 'completed' && j.uploadSpeed > 0)
+      (j) => !isVideo(j) && (j.status === 'active' || j.status === 'queued' || (j.status === 'completed' && j.uploadSpeed > 0))
     );
     if (!live || !client?.connected) {
       if (this.pollTimer) clearInterval(this.pollTimer);
@@ -1026,6 +1268,19 @@ function removeSavedMetadata(job: Job): void {
     } catch {
       /* missing or locked */
     }
+  }
+}
+
+/** yt-dlp's partial files for a video job: .part, .ytdl, per-format .fNNN files, .temp files. */
+function videoPartials(job: Job): string[] {
+  const base = (job.outName ?? job.title).replace(/\.[a-z0-9]{2,4}$/i, '');
+  try {
+    return fs
+      .readdirSync(job.dir)
+      .filter((f) => f.startsWith(`${base}.`) && (/\.(part|ytdl)$/.test(f) || /\.part-Frag\d+$/.test(f) || /\.temp\.\w+$/.test(f) || /\.f[\w-]+\.\w+$/.test(f)))
+      .map((f) => path.join(job.dir, f));
+  } catch {
+    return [];
   }
 }
 

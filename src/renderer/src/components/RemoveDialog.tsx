@@ -48,7 +48,7 @@ export function RemoveDialog({ job: j, onClose }: Props) {
         : 'Failed · nothing saved yet'
       : j.status === 'paused'
         ? `Paused at ${known ? `${pct}% of ${size}` : formatBytes(j.doneBytes)}`
-        : j.status === 'active' && partial
+        : (j.status === 'active' || j.status === 'postprocessing') && partial
           ? `Downloading · ${known ? `${pct}% of ${size}` : formatBytes(j.doneBytes)}`
           : 'Queued · not started';
   const path = !torrent && j.files[0] ? j.files[0] : joinPath(j.dir, torrent ? j.title : (j.outName ?? j.title));
@@ -60,7 +60,7 @@ export function RemoveDialog({ job: j, onClose }: Props) {
       : 'stops it. Nothing has been saved yet.';
   const deleteText = done
     ? `also moves the ${noun} to the Recycle Bin${torrent ? ', including any unselected files the torrent created' : ''}.`
-    : `also moves what was downloaded so far, and its .aria2 resume file, to the Recycle Bin${torrent ? ', including any unselected files the torrent created' : ''}.`;
+    : `also moves what was downloaded so far, and its ${j.engine === 'ytdlp' ? '.part files' : '.aria2 resume file'}, to the Recycle Bin${torrent ? ', including any unselected files the torrent created' : ''}.`;
   const tone = done ? 'var(--ok)' : 'var(--run)';
 
   const act = async (deleteFiles: boolean) => {

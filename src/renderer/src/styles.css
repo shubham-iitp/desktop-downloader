@@ -530,3 +530,23 @@ a:hover {
   flex-direction: column;
   gap: 16px;
 }
+
+/* Small × close button in dialog headers and quality lines. */
+.x-btn {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  margin: -4px -6px 0 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.x-btn:hover {
+  background: var(--panel2);
+  color: var(--text);
+}

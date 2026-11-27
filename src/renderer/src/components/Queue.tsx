@@ -9,14 +9,21 @@ interface Props {
   jobs: Job[];
   density: Density;
   onRemove: (job: Job) => void;
+  /** A captured link expired: open the Videos panel on the page it came from. */
+  onFetchAgain: (url: string) => void;
 }
 
 /** The queue for one tab. Runs top to bottom. */
-export function Queue({ tab, jobs, density, onRemove }: Props) {
-  const rows = jobs.filter((j) => tabOf(j.kind) === tab);
+export function Queue({ tab, jobs, density, onRemove, onFetchAgain }: Props) {
+  const videos = tab === 'videos';
+  let rows = jobs.filter((j) => tabOf(j.kind) === tab);
+  // Captured links expire within hours, so unfinished captured jobs sit (and run) at the top.
+  if (videos) rows = [...rows.filter(capturedFirst), ...rows.filter((j) => !capturedFirst(j))];
   const done = rows.filter((j) => j.status === 'completed').length;
-  // Queue positions are global: aria2's slots are shared by both tabs.
-  const queuedOrder = jobs.filter((j) => j.status === 'queued').map((j) => j.id);
+  // Queue positions: aria2's slots are shared by the Torrent and Normal tabs; yt-dlp has its own 3.
+  const queuedOrder = (videos ? rows.filter((j) => j.engine === 'ytdlp') : jobs.filter((j) => j.engine !== 'ytdlp'))
+    .filter((j) => j.status === 'queued')
+    .map((j) => j.id);
 
   return (
     <>
@@ -42,11 +49,18 @@ export function Queue({ tab, jobs, density, onRemove }: Props) {
           className="muted"
           style={{ padding: '48px 24px', textAlign: 'center', border: '1px dashed var(--line)', borderRadius: 12 }}
         >
-          Nothing here yet. Paste a link on the right to start.
+          {videos ? 'Nothing here yet. Fetch videos from a page on the right to start.' : 'Nothing here yet. Paste a link on the right to start.'}
         </div>
       )}
       {rows.map((j) => (
-        <JobRow key={j.id} job={j} queuePos={queuedOrder.indexOf(j.id) + 1} compact={density === 'compact'} onRemove={() => onRemove(j)} />
+        <JobRow
+          key={j.id}
+          job={j}
+          queuePos={queuedOrder.indexOf(j.id) + 1}
+          compact={density === 'compact'}
+          onRemove={() => onRemove(j)}
+          onFetchAgain={() => onFetchAgain(j.media?.pageUrl ?? j.url)}
+        />
       ))}
     </>
   );
@@ -54,6 +68,7 @@ export function Queue({ tab, jobs, density, onRemove }: Props) {
 
 const STATUS_COLOR: Record<string, string> = {
   active: 'var(--run)',
+  postprocessing: 'var(--run)',
   queued: 'var(--muted)',
   paused: 'var(--warn)',
   completed: 'var(--ok)',
@@ -62,9 +77,25 @@ const STATUS_COLOR: Record<string, string> = {
   cancelled: 'var(--muted)'
 };
 
-function JobRow({ job: j, queuePos, compact, onRemove }: { job: Job; queuePos: number; compact: boolean; onRemove: () => void }) {
+const capturedFirst = (j: Job) => j.media?.source === 'captured' && j.status !== 'completed';
+
+function JobRow({
+  job: j,
+  queuePos,
+  compact,
+  onRemove,
+  onFetchAgain
+}: {
+  job: Job;
+  queuePos: number;
+  compact: boolean;
+  onRemove: () => void;
+  onFetchAgain: () => void;
+}) {
   const [copied, setCopied] = useState(false);
   const torrent = j.kind === 'torrent';
+  const ytdlp = j.engine === 'ytdlp';
+  const expired = j.status === 'error' && j.error?.code === 'LINK_EXPIRED' && !/fetching/i.test(j.error.message);
   const st = j.status;
   const col = STATUS_COLOR[st];
   const known = j.totalBytes != null && j.totalBytes > 0;
@@ -76,7 +107,9 @@ function JobRow({ job: j, queuePos, compact, onRemove }: { job: Job; queuePos: n
       ? `Queued · #${queuePos || 1}`
       : st === 'active'
         ? 'Downloading'
-        : st === 'paused'
+        : st === 'postprocessing'
+          ? 'Processing'
+          : st === 'paused'
           ? 'Paused'
           : st === 'completed'
             ? seeding
@@ -99,7 +132,9 @@ function JobRow({ job: j, queuePos, compact, onRemove }: { job: Job; queuePos: n
         ]
           .filter(Boolean)
           .join('  ·  ')
-      : st === 'queued'
+      : st === 'postprocessing'
+        ? `${j.postNote ?? 'Processing…'}  ·  ffmpeg`
+        : st === 'queued'
         ? queuePos <= 1
           ? 'Next in line · starts when a slot frees up'
           : `Position ${queuePos} in queue · ${queuePos - 1} ahead of it`
@@ -113,7 +148,11 @@ function JobRow({ job: j, queuePos, compact, onRemove }: { job: Job; queuePos: n
 
   const meta = [
     known ? formatBytes(j.totalBytes) : st === 'completed' ? formatBytes(j.doneBytes) : 'Size unknown',
-    !torrent ? [j.host, j.kind === 'metalink' ? 'Metalink' : j.resumable ? 'Resumable' : 'No resume'].filter(Boolean).join(' · ') : j.selectionNote
+    j.kind === 'media'
+      ? [j.host, j.media?.source === 'captured' ? 'captured' : '', ytdlp ? 'yt-dlp' : 'aria2c'].filter(Boolean).join(' · ')
+      : !torrent
+        ? [j.host, j.kind === 'metalink' ? 'Metalink' : j.resumable ? 'Resumable' : 'No resume'].filter(Boolean).join(' · ')
+        : j.selectionNote
   ]
     .filter(Boolean)
     .join('  ·  ');
@@ -156,12 +195,12 @@ function JobRow({ job: j, queuePos, compact, onRemove }: { job: Job; queuePos: n
         </span>
       </div>
       <div className={`bar${st === 'active' && !known ? ' indeterminate' : ''}`}>
-        <div style={{ width: `${pct}%`, background: col }} />
+        <div style={{ width: `${st === 'postprocessing' ? 100 : pct}%`, background: col, opacity: st === 'postprocessing' ? 0.55 : undefined }} />
       </div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 12, color: st === 'error' ? 'var(--err)' : 'var(--muted)' }}>{detail}</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {st !== 'completed' && (
+          {st !== 'completed' && !ytdlp && (
             <>
               <span className="muted" style={{ fontSize: 12 }}>
                 {torrent ? 'Max peers' : 'Connections'}
@@ -190,9 +229,13 @@ function JobRow({ job: j, queuePos, compact, onRemove }: { job: Job; queuePos: n
               <button className="btn" onClick={copy} style={{ height: 30, padding: '0 10px', fontSize: 12, fontWeight: 500 }}>
                 {copied ? 'Copied' : 'Copy details'}
               </button>
-              <button className="btn" onClick={() => void window.dl.retry(j.id)} style={{ height: 30, padding: '0 10px', fontSize: 12, fontWeight: 600 }}>
+              <button
+                className="btn"
+                onClick={() => (expired ? onFetchAgain() : void window.dl.retry(j.id))}
+                style={{ height: 30, padding: '0 10px', fontSize: 12, fontWeight: 600 }}
+              >
                 <Retry />
-                Retry
+                {expired ? 'Fetch again' : 'Retry'}
               </button>
             </>
           )}

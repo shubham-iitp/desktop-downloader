@@ -7,7 +7,9 @@ import type { JobStatus } from './types';
 export const TRANSITIONS: Record<JobStatus, readonly JobStatus[]> = {
   probing: ['queued', 'cancelled', 'error'],
   queued: ['active', 'paused', 'cancelled', 'error', 'completed'],
-  active: ['queued', 'paused', 'completed', 'error', 'cancelled'],
+  active: ['queued', 'paused', 'postprocessing', 'completed', 'error', 'cancelled'],
+  // ffmpeg merge / audio extraction (yt-dlp jobs). Pause isn't offered; a restart re-queues it.
+  postprocessing: ['queued', 'completed', 'error', 'cancelled'],
   paused: ['queued', 'cancelled'],
   error: ['queued', 'cancelled'],
   completed: ['cancelled'],

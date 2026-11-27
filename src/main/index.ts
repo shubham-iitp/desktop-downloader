@@ -10,6 +10,8 @@ import { registerIpc } from './ipc';
 import { AppTray, appIcon } from './tray';
 import { log } from './log';
 import { fetchTorrentFile } from './probe';
+import { CaptureManager } from './capture/session';
+import { Engines, scanPage } from './ytdlp/ytdlp';
 
 // Development only: a separate profile (queue, settings, session) so a dev run never
 // touches the installed app's data or collides with its single-instance lock.
@@ -56,6 +58,32 @@ const notifier = {
 };
 
 const jobs = new JobManager(db, settings, notifier, () => daemon.readLogTail(200), fetchTorrentFile, (p) => shell.trashItem(p));
+
+// V2: Fetch videos (capture sessions) and the yt-dlp / ffmpeg / Deno engines.
+const capture = new CaptureManager(app.getPath('userData'), settings);
+const engines = new Engines(
+  () => db.getSetting<number>('ytdlpLastCheck') ?? 0,
+  (t) => db.setSetting('ytdlpLastCheck', t),
+  (s) => send('engines:update', s)
+);
+let lastExtractorCheck = 0;
+jobs.setMediaServices({
+  rescan: (pageUrl, cookieFile) => scanPage(pageUrl, cookieFile),
+  // A yt-dlp extractor error is often fixed by a newer yt-dlp: check, at most hourly.
+  checkYtdlp: () => {
+    if (Date.now() - lastExtractorCheck < 3_600_000) return;
+    lastExtractorCheck = Date.now();
+    void engines.checkNow().catch(() => {});
+  },
+  cookieInUse: (f) => capture.cookieInUse(f)
+});
+let lastPhase = '';
+capture.on('update', (u: { phase: string } | null) => {
+  send('capture:update', u);
+  // Session ended (window closed or End session): bring Downloader forward for "Videos found".
+  if (u && u.phase === 'scanning' && lastPhase === 'browsing') showWindow();
+  lastPhase = u?.phase ?? '';
+});
 
 const tray = new AppTray({
   show: () => showWindow(),
@@ -232,6 +260,8 @@ registerIpc({
   jobs,
   settings,
   daemon,
+  capture,
+  engines,
   getWindow: () => win,
   onCloseChoice,
   onSettingsChanged,
@@ -268,6 +298,7 @@ app.on('before-quit', (e) => {
   e.preventDefault();
   void (async () => {
     try {
+      await capture.shutdown();
       await jobs.shutdown();
       await daemon.stop(); // saveSession + shutdown, 3 s kill fallback
     } catch (err) {
@@ -301,8 +332,10 @@ app.whenReady().then(async () => {
     }
   }
   jobs.load();
+  jobs.startMedia(); // video jobs don't wait for aria2
   tray.create();
   createWindow();
+  engines.maybeAutoUpdate();
   await daemon.start();
 
   // Auto-update works for the installed (NSIS) build only, not the portable exe.

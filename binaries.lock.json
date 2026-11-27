@@ -1,12 +1,77 @@
 {
-  "version": "1.37.0",
-  "platforms": {
-    "win32-x64": {
-      "url": "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip",
-      "archiveSha256": "67d015301eef0b612191212d564c5bb0a14b5b9c4796b76454276a4d28d9b288",
-      "binary": "aria2-1.37.0-win-64bit-build1/aria2c.exe",
-      "binarySha256": "be2099c214f63a3cb4954b09a0becd6e2e34660b886d4c898d260febfe9d70c2",
-      "license": "aria2-1.37.0-win-64bit-build1/COPYING"
+  "tools": {
+    "aria2c": {
+      "version": "1.37.0",
+      "platforms": {
+        "win32-x64": {
+          "url": "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip",
+          "sha256": "67d015301eef0b612191212d564c5bb0a14b5b9c4796b76454276a4d28d9b288",
+          "files": {
+            "aria2c.exe": {
+              "from": "aria2-1.37.0-win-64bit-build1/aria2c.exe",
+              "sha256": "be2099c214f63a3cb4954b09a0becd6e2e34660b886d4c898d260febfe9d70c2"
+            },
+            "aria2-COPYING.txt": {
+              "from": "aria2-1.37.0-win-64bit-build1/COPYING",
+              "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643"
+            }
+          }
+        }
+      }
+    },
+    "yt-dlp": {
+      "version": "2026.11.23",
+      "platforms": {
+        "win32-x64": {
+          "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.11.23/yt-dlp.exe",
+          "checksumUrl": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.11.23/SHA2-256SUMS",
+          "sha256": "622ed48023cac1daa52a3bf3a6ac38f03514de214b5f0fa069389fd0f6d17e5c",
+          "files": {
+            "yt-dlp.exe": {
+              "sha256": "622ed48023cac1daa52a3bf3a6ac38f03514de214b5f0fa069389fd0f6d17e5c"
+            }
+          }
+        }
+      }
+    },
+    "ffmpeg": {
+      "version": "9.1",
+      "platforms": {
+        "win32-x64": {
+          "url": "https://github.com/GyanD/codexffmpeg/releases/download/9.1/ffmpeg-9.1-essentials_build.zip",
+          "sha256": "b9bbbb3acece000cbeec994f856649354e52c773807841e78908374b24d658fd",
+          "files": {
+            "ffmpeg.exe": {
+              "from": "ffmpeg-9.1-essentials_build/bin/ffmpeg.exe",
+              "sha256": "ed8f66cb877087a96f5bbb40a2944f0e764f2ad8870d5cb647360d912e62bc07"
+            },
+            "ffprobe.exe": {
+              "from": "ffmpeg-9.1-essentials_build/bin/ffprobe.exe",
+              "sha256": "df0199f606faa88e9ad192732a7c3987acfb647663534c297772e17730611a08"
+            },
+            "ffmpeg-LICENSE.txt": {
+              "from": "ffmpeg-9.1-essentials_build/LICENSE",
+              "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+            }
+          }
+        }
+      }
+    },
+    "deno": {
+      "version": "2.9.8",
+      "platforms": {
+        "win32-x64": {
+          "url": "https://github.com/denoland/deno/releases/download/v2.9.8/deno-x86_64-pc-windows-msvc.zip",
+          "checksumUrl": "https://github.com/denoland/deno/releases/download/v2.9.8/deno-x86_64-pc-windows-msvc.zip.sha256sum",
+          "sha256": "cba84b26e0df5ae7f74fc66b86a95b866872a86292ebd84fa1e959927edd93bf",
+          "files": {
+            "deno.exe": {
+              "from": "deno.exe",
+              "sha256": "924397800533d3eb0ed0c889b20ad70e18b970d93acd8135bc043f425e528266"
+            }
+          }
+        }
+      }
     }
   }
 }
