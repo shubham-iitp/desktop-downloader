@@ -168,3 +168,9 @@ export const NoVideo = ({ size = 36, ...p }: P) => (
     <path d="M3 3l18 18" />
   </svg>
 );
+export const ArrowRight = ({ size = 14, ...p }: P) => (
+  <svg {...base(size, p)}>
+    <path d="M5 12h14" />
+    <path d="m13 6 6 6-6 6" />
+  </svg>
+);

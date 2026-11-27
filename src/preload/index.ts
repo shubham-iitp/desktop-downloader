@@ -53,7 +53,11 @@ const api: DownloaderApi = {
   onCapture: on('capture:update'),
   enginesStatus: () => ipcRenderer.invoke('engines:status'),
   checkYtdlp: () => ipcRenderer.invoke('engines:checkYtdlp'),
-  onEngines: on('engines:update')
+  onEngines: on('engines:update'),
+  getDefaults: () => ipcRenderer.invoke('defaults:get'),
+  setDefaults: (w) => ipcRenderer.invoke('defaults:set', w),
+  firstRunAsk: () => ipcRenderer.invoke('firstRun:ask'),
+  firstRunDone: () => ipcRenderer.invoke('firstRun:done')
 };
 
 contextBridge.exposeInMainWorld('dl', api);

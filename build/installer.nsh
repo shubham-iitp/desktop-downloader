@@ -16,5 +16,14 @@
     ReadRegStr $0 HKCU "Software\Classes\magnet\shell\open\command" ""
     StrCmp $0 '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "%1"' 0 +2
       DeleteRegKey HKCU "Software\Classes\magnet"
+    ; .torrent files, and the entry that lists Downloader in Settings > Default apps.
+    ReadRegStr $0 HKCU "Software\Classes\.torrent" ""
+    StrCmp $0 "DesktopDownloader.Torrent" 0 +2
+      DeleteRegValue HKCU "Software\Classes\.torrent" ""
+    DeleteRegValue HKCU "Software\Classes\.torrent\OpenWithProgids" "DesktopDownloader.Torrent"
+    DeleteRegKey HKCU "Software\Classes\DesktopDownloader.Magnet"
+    DeleteRegKey HKCU "Software\Classes\DesktopDownloader.Torrent"
+    DeleteRegKey HKCU "Software\DesktopDownloader"
+    DeleteRegValue HKCU "Software\RegisteredApplications" "Desktop Downloader"
   ${endIf}
 !macroend

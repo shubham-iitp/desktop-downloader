@@ -13,6 +13,7 @@ import { log } from './log';
 import type { CaptureManager } from './capture/session';
 import { verifyBrowser } from './capture/browsers';
 import type { Engines } from './ytdlp/ytdlp';
+import { getDefaults, setDefaults } from './defaults';
 
 export interface IpcDeps {
   jobs: JobManager;
@@ -25,6 +26,8 @@ export interface IpcDeps {
   onSettingsChanged: (prev: Settings, next: Settings) => void;
   quit: () => void;
   takePendingLink: () => string | null;
+  firstRunAsk: () => boolean;
+  firstRunDone: () => void;
   appInfo: () => { platform: string; version: string; isMac: boolean };
 }
 
@@ -227,6 +230,11 @@ export function registerIpc(d: IpcDeps): void {
   handle('app:closeChoice', z.tuple([z.enum(['hide', 'quit', 'cancel'])]), (c) => d.onCloseChoice(c));
   handle('app:quit', null, () => d.quit());
   handle('app:takePendingLink', null, () => d.takePendingLink());
+  // ---- magnet: links / .torrent files
+  handle('defaults:get', null, () => getDefaults());
+  handle('defaults:set', z.tuple([z.object({ magnet: z.boolean().optional(), torrent: z.boolean().optional() }).strict()]), (w) => setDefaults(w));
+  handle('firstRun:ask', null, () => d.firstRunAsk());
+  handle('firstRun:done', null, () => d.firstRunDone());
   handle('app:openExternal', z.tuple([z.string().max(2048)]), async (url) => {
     if (ALLOWED_EXTERNAL.test(url)) await shell.openExternal(url);
   });

@@ -13,6 +13,7 @@ import { LegalNotice } from './components/LegalNotice';
 import { RemoveDialog } from './components/RemoveDialog';
 import { VideosPanel } from './components/VideosPanel';
 import { VideosPopup } from './components/VideosPopup';
+import { FirstRunDialog, FirstRunToast } from './components/FirstRun';
 
 type View = 'main' | 'settings';
 
@@ -34,6 +35,17 @@ export function App() {
   const takeIncoming = useCallback(() => setIncoming(null), []);
   // V2: the capture session (browsing, then the "Videos found" popup), and a page to fetch again.
   const [capture, setCapture] = useState<CaptureUpdate | null>(null);
+  // First open of a fresh install: ask about magnet links / .torrent files, then confirm.
+  const [firstRun, setFirstRun] = useState<'' | 'ask' | 'done'>('');
+  const [frResult, setFrResult] = useState({ torrent: false, blocked: false, torrentSupported: true });
+  const answerFirstRun = useCallback(async (yes: boolean, torrent: boolean) => {
+    setFirstRun('');
+    await window.dl.firstRunDone();
+    if (!yes) return;
+    const r = await window.dl.setDefaults({ magnet: true, torrent });
+    setFrResult((x) => ({ ...x, torrent: r.torrent, blocked: r.blocked }));
+    setFirstRun('done');
+  }, []);
   const [videoLink, setVideoLink] = useState('');
   const [videoBrowser, setVideoBrowser] = useState('');
   const fetchAgain = useCallback((url: string) => {
@@ -64,6 +76,12 @@ export function App() {
     );
     const offEngine = window.dl.onEngineStatus(setEngine);
     void window.dl.currentCapture().then(setCapture);
+    void window.dl.firstRunAsk().then(async (ask) => {
+      if (!ask) return;
+      const d = await window.dl.getDefaults();
+      setFrResult((x) => ({ ...x, torrentSupported: d.torrentSupported }));
+      setFirstRun('ask');
+    });
     const offCapture = window.dl.onCapture(setCapture);
     void window.dl.takePendingLink().then((link) => link && receiveLink(link));
     const offLink = window.dl.onOpenLink(receiveLink);
@@ -239,6 +257,19 @@ export function App() {
             fetchAgain(url);
           }}
           onAdded={() => setTab('videos')}
+        />
+      )}
+      {firstRun === 'ask' && <FirstRunDialog torrentSupported={frResult.torrentSupported} onAnswer={(y, t) => void answerFirstRun(y, t)} />}
+      {firstRun === 'done' && view === 'main' && (
+        <FirstRunToast
+          torrent={frResult.torrent}
+          blocked={frResult.blocked}
+          onSettings={() => {
+            setFirstRun('');
+            setSection('general');
+            setView('settings');
+          }}
+          onDismiss={() => setFirstRun('')}
         />
       )}
       {removeId && jobs.get(removeId) && <RemoveDialog job={jobs.get(removeId)!} onClose={closeRemove} />}

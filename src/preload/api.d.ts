@@ -5,6 +5,7 @@ import type {
   Browser,
   CaptureStartError,
   CaptureUpdate,
+  DefaultsState,
   EnginesStatus,
   CloseChoice,
   EngineStatus,
@@ -65,6 +66,14 @@ export interface DownloaderApi {
   enginesStatus(): Promise<EnginesStatus>;
   checkYtdlp(): Promise<EnginesStatus>;
   onEngines(cb: (s: EnginesStatus) => void): () => void;
+
+  // magnet: links / .torrent files
+  getDefaults(): Promise<DefaultsState>;
+  /** blocked = Windows kept another app; Default apps was opened for the user to confirm. */
+  setDefaults(want: { magnet?: boolean; torrent?: boolean }): Promise<DefaultsState & { blocked: boolean }>;
+  /** True on the first open of a fresh install (or of the portable exe). */
+  firstRunAsk(): Promise<boolean>;
+  firstRunDone(): Promise<void>;
 }
 
 declare global {

@@ -12,6 +12,8 @@ import { log } from './log';
 import { fetchTorrentFile } from './probe';
 import { CaptureManager } from './capture/session';
 import { Engines, scanPage } from './ytdlp/ytdlp';
+import { noMagnetHandler, setDefaults } from './defaults';
+import fs from 'node:fs';
 
 // Development only: a separate profile (queue, settings, session) so a dev run never
 // touches the installed app's data or collides with its single-instance lock.
@@ -24,6 +26,16 @@ if (!app.requestSingleInstanceLock()) {
 
 const startHidden = process.argv.includes('--hidden');
 
+/** A .torrent file passed on the command line (double-clicked in Explorer / a file manager). */
+function torrentFileFrom(argv: string[]): string | undefined {
+  const f = argv.slice(1).find((a) => /\.torrent$/i.test(a) && !a.startsWith('-'));
+  try {
+    return f && fs.statSync(f).isFile() ? path.resolve(f) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** A magnet link passed on the command line (Windows/Linux protocol launch). Only magnet: is accepted. */
 function magnetFrom(argv: string[]): string | undefined {
   const link = argv.find((a) => /^magnet:\?/i.test(a));
@@ -31,7 +43,9 @@ function magnetFrom(argv: string[]): string | undefined {
 }
 
 // A magnet link that arrived before the window could take it (cold start).
-let pendingLink: string | undefined = magnetFrom(process.argv);
+let pendingLink: string | undefined = magnetFrom(process.argv) ?? torrentFileFrom(process.argv);
+/** Fresh install (or first run of the portable exe): ask about magnet links / .torrent files. */
+let askDefaults = false;
 let win: BrowserWindow | undefined;
 let quitting = false;
 let shutdownDone = false;
@@ -106,6 +120,7 @@ function sendCommand(cmd: AppCommand) {
 
 /** Brings the window forward and hands it a magnet link to show in the Torrent tab. */
 function openLink(link: string) {
+  if (!/^magnet:/i.test(link)) jobs.allowedLocal.add(link); // a .torrent file the user opened
   showWindow();
   if (win && !win.isDestroyed() && !win.webContents.isLoading()) send('app:openLink', link);
   else pendingLink = link; // the renderer collects it with app:takePendingLink once loaded
@@ -118,6 +133,11 @@ function showWindow() {
     win.show();
     win.focus();
   }
+}
+
+/** Settings flag that records the first-launch question was answered (per install type). */
+function askFlag(): string {
+  return process.env.PORTABLE_EXECUTABLE_FILE ? 'defaultsAskedPortable' : 'defaultsAsked';
 }
 
 function backgroundFor(s: Settings): string {
@@ -269,14 +289,20 @@ registerIpc({
   takePendingLink: () => {
     const link = pendingLink;
     pendingLink = undefined;
+    if (link && !/^magnet:/i.test(link)) jobs.allowedLocal.add(link);
     return link ?? null;
+  },
+  firstRunAsk: () => askDefaults,
+  firstRunDone: () => {
+    askDefaults = false;
+    settings.setFlag(askFlag(), true);
   },
   appInfo: () => ({ platform: process.platform, version: app.getVersion(), isMac: process.platform === 'darwin' })
 });
 
 // Clicking a magnet link while the app runs starts a second instance; it forwards argv here.
 app.on('second-instance', (_e, argv) => {
-  const link = magnetFrom(argv);
+  const link = magnetFrom(argv) ?? torrentFileFrom(argv);
   if (link) openLink(link);
   else showWindow();
 });
@@ -286,6 +312,13 @@ app.on('open-url', (e, url) => {
   if (!/^magnet:\?/i.test(url)) return;
   if (app.isReady()) openLink(url);
   else pendingLink = url;
+});
+// macOS: a .torrent file opened from Finder.
+app.on('open-file', (e, file) => {
+  if (!/\.torrent$/i.test(file)) return;
+  e.preventDefault();
+  if (app.isReady()) openLink(file);
+  else pendingLink = file;
 });
 app.on('activate', () => showWindow());
 app.on('window-all-closed', () => {
@@ -319,21 +352,21 @@ app.whenReady().then(async () => {
     cb(['clipboard-read', 'clipboard-sanitized-write', 'notifications'].includes(permission))
   );
   buildMenu();
-  // Become the handler for magnet: links once, on first run of the installed app (a dev run
-  // would point them at the bare Electron binary). If the user later picks another torrent
-  // client, we don't take the links back. The uninstaller removes our registration.
-  // The portable exe unpacks to a temp folder on each start, so register the exe the user
-  // actually ran (electron-builder sets PORTABLE_EXECUTABLE_FILE), not the temp copy.
-  const portableExe = process.env.PORTABLE_EXECUTABLE_FILE;
-  const handlerArgs: [string, string?, string[]?] = portableExe ? ['magnet', portableExe, []] : ['magnet'];
-  // Also register again when no app handles magnet: links at all (an upgrade's uninstall step
-  // used to remove the registration). If the user picked another client, that app is listed
-  // and is left alone.
-  const noHandler = !app.getApplicationNameForProtocol('magnet:?xt=urn:btih:0');
-  if (app.isPackaged && (noHandler || !settings.getFlag(portableExe ? 'magnetRegisteredPortable' : 'magnetRegistered'))) {
-    if (app.isDefaultProtocolClient(...handlerArgs) || app.setAsDefaultProtocolClient(...handlerArgs)) {
-      settings.setFlag(portableExe ? 'magnetRegisteredPortable' : 'magnetRegistered', true);
+  // magnet: links and .torrent files. A fresh install (or the portable exe's first run) asks once
+  // (renderer dialog). Upgrades never ask and never take links back: they keep what the user
+  // has, except that an upgrade from 0.1.x whose registration was removed by the old
+  // uninstaller (nothing handles magnet: at all) gets it back, once.
+  if (app.isPackaged && !settings.getFlag(askFlag())) {
+    const portable = !!process.env.PORTABLE_EXECUTABLE_FILE;
+    const hadIt = settings.getFlag(portable ? 'magnetRegisteredPortable' : 'magnetRegistered');
+    if (hadIt) {
+      settings.setFlag(askFlag(), true);
+      void setDefaults(noMagnetHandler() ? { magnet: true } : {}).catch((e) => log.warn('defaults restore failed', e));
+    } else {
+      askDefaults = true;
     }
+  } else if (!app.isPackaged && process.env.DD_FIRST_RUN === '1') {
+    askDefaults = true; // development: show the first-launch dialog (it registers nothing)
   }
   jobs.load();
   jobs.startMedia(); // video jobs don't wait for aria2

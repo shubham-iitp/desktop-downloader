@@ -1,5 +1,5 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
-import { FONTS, type Browser, type EngineInfo, type EngineStatus, type EnginesStatus, type FontName, type Settings } from '@shared/types';
+import { FONTS, type Browser, type DefaultsState, type EngineInfo, type EngineStatus, type EnginesStatus, type FontName, type Settings } from '@shared/types';
 import { ChevronLeft } from '../icons';
 import { useTick } from '../hooks';
 import { TitleBar } from './TitleBar';
@@ -124,11 +124,51 @@ function General({ s, update, version }: SectionProps & { version: string }) {
           <Switch on={s.resumeOnLaunch} label="Resume unfinished downloads on launch" onChange={(v) => update({ resumeOnLaunch: v })} />
         </Row>
       </div>
+      <OpenWith />
       <p className="muted" style={{ fontSize: 12, lineHeight: 1.6, margin: 0 }}>
         Desktop Downloader {version}. Downloads run through aria2c (GPL-2.0-or-later), and videos through yt-dlp (Unlicense) with ffmpeg
         (GPL-3.0) and Deno (MIT), each shipped as a separate program with its license text. You're responsible for following copyright law and each site's terms for what you download.
       </p>
     </>
+  );
+}
+
+/** Settings › General: magnet links and .torrent files (what Windows actually has registered). */
+function OpenWith() {
+  const [st, setSt] = useState<DefaultsState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [blocked, setBlocked] = useState(false);
+  const load = () => void window.dl.getDefaults().then(setSt);
+  useEffect(() => {
+    load();
+    // The user may switch apps in Windows Settings meanwhile: re-check when the window regains focus.
+    window.addEventListener('focus', load);
+    return () => window.removeEventListener('focus', load);
+  }, []);
+  if (!st) return null;
+  const set = async (want: { magnet?: boolean; torrent?: boolean }) => {
+    setBusy(true);
+    const r = await window.dl.setDefaults(want);
+    setSt(r);
+    setBlocked(r.blocked);
+    setBusy(false);
+  };
+  return (
+    <div className="st-card">
+      <Row title="Open magnet links with Downloader" hint="Clicking a magnet link in any browser adds it to the Torrent tab. Set when you said yes on first launch.">
+        <Switch on={st.magnet} label="Open magnet links with Downloader" onChange={(v) => !busy && void set({ magnet: v })} />
+      </Row>
+      {st.torrentSupported && (
+        <Row title="Open .torrent files with Downloader" hint="Double-clicking a .torrent file opens its file list here.">
+          <Switch on={st.torrent} label="Open .torrent files with Downloader" onChange={(v) => !busy && void set({ torrent: v })} />
+        </Row>
+      )}
+      {blocked && (
+        <div style={{ fontSize: 12, color: 'var(--warn)', padding: '0 0 14px', lineHeight: 1.5 }}>
+          Windows kept the app picked in Settings › Default apps, which apps can’t change. It’s open now: choose Desktop Downloader there.
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -313,4 +313,12 @@ export interface AppInfo {
 export type Result<T> = { ok: true; value: T } | { ok: false; error: JobError };
 
 export type CloseChoice = 'hide' | 'quit' | 'cancel';
+
+/** Whether Downloader is what opens magnet: links and .torrent files right now. */
+export interface DefaultsState {
+  magnet: boolean;
+  torrent: boolean;
+  /** .torrent file handling can be switched from the app (Windows). */
+  torrentSupported: boolean;
+}
 export type AppCommand = 'open-torrent' | 'settings' | 'ask-close';
