@@ -1,9 +1,31 @@
 ; Extra NSIS steps for the Windows installer (included by electron-builder).
 
+; Fresh install or update? Decided before anything is installed: an auto-update passes
+; --updated, and a manual install over an existing copy finds electron-builder's install key
+; (a real uninstall deletes it). Only a fresh install asks about magnet links on first launch.
+Var ddFreshInstall
+
+!macro customInit
+  StrCpy $ddFreshInstall "1"
+  ${if} ${isUpdated}
+    StrCpy $ddFreshInstall "0"
+  ${endIf}
+  ReadRegStr $0 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
+  StrCmp $0 "" +2
+    StrCpy $ddFreshInstall "0"
+  ReadRegStr $0 HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation
+  StrCmp $0 "" +2
+    StrCpy $ddFreshInstall "0"
+!macroend
+
 ; A visible "Uninstall" entry next to the app in the Start menu. The app is also listed
 ; in Settings > Apps > Installed apps, where right-click > Uninstall in Start leads.
 !macro customInstall
   CreateShortCut "$SMPROGRAMS\Uninstall ${PRODUCT_NAME}.lnk" "$INSTDIR\${UNINSTALL_FILENAME}" "" "$INSTDIR\${UNINSTALL_FILENAME}" 0
+  ; Tells the app to ask "Open magnet links with Downloader?" on its first launch.
+  ${if} $ddFreshInstall == "1"
+    WriteRegStr HKCU "Software\DesktopDownloader" "AskDefaults" "1"
+  ${endIf}
 !macroend
 
 !macro customUnInstall

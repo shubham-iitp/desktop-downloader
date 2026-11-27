@@ -12,7 +12,7 @@ import { log } from './log';
 import { fetchTorrentFile } from './probe';
 import { CaptureManager } from './capture/session';
 import { Engines, scanPage } from './ytdlp/ytdlp';
-import { noMagnetHandler, setDefaults } from './defaults';
+import { clearInstallerAsk, installerAsks, noMagnetHandler, setDefaults } from './defaults';
 import fs from 'node:fs';
 
 // Development only: a separate profile (queue, settings, session) so a dev run never
@@ -296,6 +296,8 @@ registerIpc({
   firstRunDone: () => {
     askDefaults = false;
     settings.setFlag(askFlag(), true);
+    settings.setFlag('defaultsUpgradeChecked', true);
+    void clearInstallerAsk();
   },
   appInfo: () => ({ platform: process.platform, version: app.getVersion(), isMac: process.platform === 'darwin' })
 });
@@ -352,19 +354,18 @@ app.whenReady().then(async () => {
     cb(['clipboard-read', 'clipboard-sanitized-write', 'notifications'].includes(permission))
   );
   buildMenu();
-  // magnet: links and .torrent files. A fresh install (or the portable exe's first run) asks once
-  // (renderer dialog). Upgrades never ask and never take links back: they keep what the user
-  // has, except that an upgrade from 0.1.x whose registration was removed by the old
-  // uninstaller (nothing handles magnet: at all) gets it back, once.
-  if (app.isPackaged && !settings.getFlag(askFlag())) {
-    const portable = !!process.env.PORTABLE_EXECUTABLE_FILE;
+  // magnet: links and .torrent files. Asked once, on the first launch after a fresh install
+  // (the installer leaves a marker; an update doesn't), or on the portable exe's first run.
+  // Updates never ask and never take links back. One exception, once: an upgrade from 0.1.x
+  // whose registration the old uninstaller removed (nothing handles magnet: at all) gets it back.
+  const portable = !!process.env.PORTABLE_EXECUTABLE_FILE;
+  if (app.isPackaged && (portable ? !settings.getFlag(askFlag()) : await installerAsks())) {
+    askDefaults = true;
+  } else if (app.isPackaged && !settings.getFlag('defaultsUpgradeChecked')) {
+    settings.setFlag('defaultsUpgradeChecked', true);
     const hadIt = settings.getFlag(portable ? 'magnetRegisteredPortable' : 'magnetRegistered');
-    if (hadIt) {
-      settings.setFlag(askFlag(), true);
-      void setDefaults(noMagnetHandler() ? { magnet: true } : {}).catch((e) => log.warn('defaults restore failed', e));
-    } else {
-      askDefaults = true;
-    }
+    if (hadIt && noMagnetHandler()) void setDefaults({ magnet: true }).catch((e) => log.warn('defaults restore failed', e));
+    else if (hadIt) void setDefaults({}).catch(() => {}); // lists Downloader in Default apps
   } else if (!app.isPackaged && process.env.DD_FIRST_RUN === '1') {
     askDefaults = true; // development: show the first-launch dialog (it registers nothing)
   }

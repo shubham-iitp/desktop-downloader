@@ -85,6 +85,17 @@ export async function getDefaults(): Promise<DefaultsState> {
   return { magnet: app.isDefaultProtocolClient('magnet'), torrent: false, torrentSupported: false };
 }
 
+const MARKER_KEY = `${HKCU}Software\\DesktopDownloader`;
+
+/** Set by the installer on a fresh install (not an update): ask on first launch. */
+export async function installerAsks(): Promise<boolean> {
+  return isWin && (await regGet(MARKER_KEY, 'AskDefaults')) === '1';
+}
+
+export async function clearInstallerAsk(): Promise<void> {
+  if (isWin) await reg(['delete', MARKER_KEY, '/v', 'AskDefaults', '/f']);
+}
+
 /** True when no app at all handles magnet: links. */
 export function noMagnetHandler(): boolean {
   return !app.getApplicationNameForProtocol('magnet:?xt=urn:btih:0');
