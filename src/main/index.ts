@@ -319,19 +319,20 @@ app.whenReady().then(async () => {
     cb(['clipboard-read', 'clipboard-sanitized-write', 'notifications'].includes(permission))
   );
   buildMenu();
-  // Become the handler for magnet: links on the first run of each installed version (a dev
-  // run would point them at the bare Electron binary): after an update, Downloader takes the
-  // links back if another app had them. Between updates a different client the user picks is
-  // left alone, except that if no app handles magnet: links at all, we register again.
+  // Become the handler for magnet: links once, on first run of the installed app (a dev run
+  // would point them at the bare Electron binary). If the user later picks another torrent
+  // client, we don't take the links back. The uninstaller removes our registration.
   // The portable exe unpacks to a temp folder on each start, so register the exe the user
   // actually ran (electron-builder sets PORTABLE_EXECUTABLE_FILE), not the temp copy.
   const portableExe = process.env.PORTABLE_EXECUTABLE_FILE;
   const handlerArgs: [string, string?, string[]?] = portableExe ? ['magnet', portableExe, []] : ['magnet'];
-  const magnetFlag = `${portableExe ? 'magnetRegisteredPortable' : 'magnetRegistered'}-${app.getVersion()}`;
+  // Also register again when no app handles magnet: links at all (an upgrade's uninstall step
+  // used to remove the registration). If the user picked another client, that app is listed
+  // and is left alone.
   const noHandler = !app.getApplicationNameForProtocol('magnet:?xt=urn:btih:0');
-  if (app.isPackaged && (noHandler || !settings.getFlag(magnetFlag))) {
+  if (app.isPackaged && (noHandler || !settings.getFlag(portableExe ? 'magnetRegisteredPortable' : 'magnetRegistered'))) {
     if (app.isDefaultProtocolClient(...handlerArgs) || app.setAsDefaultProtocolClient(...handlerArgs)) {
-      settings.setFlag(magnetFlag, true);
+      settings.setFlag(portableExe ? 'magnetRegisteredPortable' : 'magnetRegistered', true);
     }
   }
   jobs.load();
