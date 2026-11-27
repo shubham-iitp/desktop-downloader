@@ -6,8 +6,8 @@ A cross-platform download manager (Windows, macOS, Linux) built on Electron. **a
 
 From [Releases](https://github.com/shubham-iitp/desktop-downloader/releases/latest):
 
-- **`Desktop-Downloader-Setup-<version>.exe`** is the installer. It adds Start-menu and desktop shortcuts plus an uninstaller, opens `magnet:` links in the app, and gets auto-updates.
-- **`Desktop-Downloader-<version>-portable.exe`** needs no install: download and run it. Queue and settings are kept in `%APPDATA%\Desktop Downloader` like the installed app. There are no auto-updates, so download new versions by hand.
+- **`Desktop-Downloader-Setup-<version>.exe`** is the installer. It adds Start-menu and desktop shortcuts plus an uninstaller, and gets auto-updates. On the first launch after a fresh install it asks whether to open `magnet:` links (and `.torrent` files) with Downloader; updates keep your choice. Uninstalling removes the app's data in `%APPDATA%\Desktop Downloader` (queue, settings, the capture browser's logins), so a reinstall starts fresh. Downloaded files are never touched.
+- **`Desktop-Downloader-<version>-portable.exe`** needs no install: download and run it. Queue and settings are kept in `%APPDATA%\Desktop Downloader` like the installed app (so uninstalling the installed app clears them too). It asks about `magnet:` links on its first run. There are no auto-updates, so download new versions by hand.
 
 The builds aren't code-signed yet, so Windows SmartScreen may warn: **More info → Run anyway**. Compare the file against `SHA256SUMS.txt` in the release.
 

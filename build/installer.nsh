@@ -51,5 +51,7 @@
     DeleteRegKey HKCU "Software\Classes\DesktopDownloader.Torrent"
     DeleteRegKey HKCU "Software\DesktopDownloader"
     DeleteRegValue HKCU "Software\RegisteredApplications" "Desktop Downloader"
+    ; electron-updater's download cache (app data itself goes via deleteAppDataOnUninstall).
+    RMDir /r "$LOCALAPPDATA\desktop-downloader-updater"
   ${endIf}
 !macroend

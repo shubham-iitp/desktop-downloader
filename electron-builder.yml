@@ -29,6 +29,10 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
+  # Uninstalling removes everything the app keeps in %APPDATA%\Desktop Downloader (queue,
+  # settings, the capture browser profile, logs), so a reinstall starts fresh. Not during an
+  # update, which runs the old uninstaller with --updated. Downloaded files are never touched.
+  deleteAppDataOnUninstall: true
   # Adds an "Uninstall Desktop Downloader" Start-menu shortcut, and on uninstall removes it
   # and the app's magnet: registration.
   include: build/installer.nsh
