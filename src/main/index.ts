@@ -25,6 +25,8 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 const startHidden = process.argv.includes('--hidden');
+/** Milliseconds since the process started, for the startup timing log. */
+const ms = () => `${Math.round(process.uptime() * 1000)} ms`;
 
 /** A .torrent file passed on the command line (double-clicked in Explorer / a file manager). */
 function torrentFileFrom(argv: string[]): string | undefined {
@@ -46,8 +48,15 @@ function magnetFrom(argv: string[]): string | undefined {
 let pendingLink: string | undefined = magnetFrom(process.argv) ?? torrentFileFrom(process.argv);
 /** Fresh install (or first run of the portable exe): ask about magnet links / .torrent files. */
 let askDefaults = false;
+let askReady: Promise<void> = Promise.resolve();
 let win: BrowserWindow | undefined;
 let quitting = false;
+/** Cleanup after Quit has started (the window is already hidden). */
+let shuttingDown = false;
+/** Launched again during that cleanup: relaunch when it's done. */
+let relaunchAfterQuit = false;
+/** A link that came with that launch, passed on to the relaunched copy. */
+let pendingLinkOnRelaunch: string | undefined;
 let shutdownDone = false;
 
 const db = new Db(app.getPath('userData'));
@@ -195,6 +204,7 @@ function createWindow() {
   });
 
   win.once('ready-to-show', () => {
+    log.info(`timing: window ready ${ms()}`);
     if (!startHidden || pendingLink) win?.show();
   });
 
@@ -292,7 +302,7 @@ registerIpc({
     if (link && !/^magnet:/i.test(link)) jobs.allowedLocal.add(link);
     return link ?? null;
   },
-  firstRunAsk: () => askDefaults,
+  firstRunAsk: () => askReady.then(() => askDefaults),
   firstRunDone: () => {
     askDefaults = false;
     settings.setFlag(askFlag(), true);
@@ -304,6 +314,12 @@ registerIpc({
 
 // Clicking a magnet link while the app runs starts a second instance; it forwards argv here.
 app.on('second-instance', (_e, argv) => {
+  if (shuttingDown) {
+    relaunchAfterQuit = true;
+    const link = magnetFrom(argv) ?? torrentFileFrom(argv);
+    if (link) pendingLinkOnRelaunch = link;
+    return;
+  }
   const link = magnetFrom(argv) ?? torrentFileFrom(argv);
   if (link) openLink(link);
   else showWindow();
@@ -331,22 +347,39 @@ app.on('before-quit', (e) => {
   quitting = true;
   if (shutdownDone) return;
   e.preventDefault();
+  if (shuttingDown) return;
+  shuttingDown = true;
+  // Gone from the screen at once; the cleanup below finishes out of sight.
+  for (const w of BrowserWindow.getAllWindows()) w.hide();
+  tray.destroy();
   void (async () => {
     try {
+      const t0 = Date.now();
       await capture.shutdown();
+      const t1 = Date.now();
+      // Anything still downloading? aria2c's graceful stop (~4 s) writes their resume files;
+      // with nothing running the session is saved and aria2c is stopped straight away.
+      const busy = jobs.counts();
       await jobs.shutdown();
-      await daemon.stop(); // saveSession + shutdown, 3 s kill fallback
+      const t2 = Date.now();
+      await daemon.stop(busy.active + busy.queued === 0);
+      log.info(`timing: quit capture ${t1 - t0} ms, jobs ${t2 - t1} ms, engine ${Date.now() - t2} ms`);
     } catch (err) {
       log.error('shutdown failed', err);
     }
     shutdownDone = true;
-    tray.destroy();
     db.close();
+    // Downloader was launched again while it was quitting: start fresh once this copy is gone.
+    if (relaunchAfterQuit) {
+      const args = process.argv.slice(1).filter((a) => a !== '--hidden' && !/^magnet:/i.test(a) && !/\.torrent$/i.test(a));
+      app.relaunch({ args: pendingLinkOnRelaunch ? [...args, pendingLinkOnRelaunch] : args });
+    }
     app.quit();
   })();
 });
 
 app.whenReady().then(async () => {
+  log.info(`timing: app ready ${ms()}`);
   app.setAppUserModelId('com.desktopdownloader.app');
   nativeTheme.themeSource = settings.get().theme;
   // The UI needs only clipboard access and notifications.
@@ -358,23 +391,28 @@ app.whenReady().then(async () => {
   // (the installer leaves a marker; an update doesn't), or on the portable exe's first run.
   // Updates never ask and never take links back. One exception, once: an upgrade from 0.1.x
   // whose registration the old uninstaller removed (nothing handles magnet: at all) gets it back.
-  const portable = !!process.env.PORTABLE_EXECUTABLE_FILE;
-  if (app.isPackaged && (portable ? !settings.getFlag(askFlag()) : await installerAsks())) {
-    askDefaults = true;
-  } else if (app.isPackaged && !settings.getFlag('defaultsUpgradeChecked')) {
-    settings.setFlag('defaultsUpgradeChecked', true);
-    const hadIt = settings.getFlag(portable ? 'magnetRegisteredPortable' : 'magnetRegistered');
-    if (hadIt && noMagnetHandler()) void setDefaults({ magnet: true }).catch((e) => log.warn('defaults restore failed', e));
-    else if (hadIt) void setDefaults({}).catch(() => {}); // lists Downloader in Default apps
-  } else if (!app.isPackaged && process.env.DD_FIRST_RUN === '1') {
-    askDefaults = true; // development: show the first-launch dialog (it registers nothing)
-  }
+  // Runs alongside window creation; the renderer's firstRunAsk waits for it.
+  askReady = (async () => {
+    const portable = !!process.env.PORTABLE_EXECUTABLE_FILE;
+    if (app.isPackaged && (portable ? !settings.getFlag(askFlag()) : await installerAsks())) {
+      askDefaults = true;
+    } else if (app.isPackaged && !settings.getFlag('defaultsUpgradeChecked')) {
+      settings.setFlag('defaultsUpgradeChecked', true);
+      const hadIt = settings.getFlag(portable ? 'magnetRegisteredPortable' : 'magnetRegistered');
+      if (hadIt && noMagnetHandler()) void setDefaults({ magnet: true }).catch((e) => log.warn('defaults restore failed', e));
+      else if (hadIt) void setDefaults({}).catch(() => {}); // lists Downloader in Default apps
+    } else if (!app.isPackaged && process.env.DD_FIRST_RUN === '1') {
+      askDefaults = true; // development: show the first-launch dialog (it registers nothing)
+    }
+  })().catch((e) => log.warn('first-run check failed', e));
   jobs.load();
   jobs.startMedia(); // video jobs don't wait for aria2
   tray.create();
   createWindow();
   engines.maybeAutoUpdate();
+  log.info(`timing: window created ${ms()}`);
   await daemon.start();
+  log.info(`timing: engine started ${ms()}`);
 
   // Auto-update works for the installed (NSIS) build only, not the portable exe.
   if (app.isPackaged && !process.env.PORTABLE_EXECUTABLE_FILE) {

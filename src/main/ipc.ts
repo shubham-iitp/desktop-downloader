@@ -26,7 +26,7 @@ export interface IpcDeps {
   onSettingsChanged: (prev: Settings, next: Settings) => void;
   quit: () => void;
   takePendingLink: () => string | null;
-  firstRunAsk: () => boolean;
+  firstRunAsk: () => Promise<boolean>;
   firstRunDone: () => void;
   appInfo: () => { platform: string; version: string; isMac: boolean };
 }

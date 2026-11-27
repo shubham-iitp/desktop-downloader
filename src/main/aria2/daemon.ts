@@ -208,18 +208,24 @@ export class Aria2Daemon extends EventEmitter {
   }
 
   /** saveSession + shutdown, with a 3 s kill fallback. */
-  async stop(): Promise<void> {
+  /**
+   * Saves the session and stops aria2c. Its graceful shutdown takes about 4 s and writes the
+   * resume (.aria2) files of running downloads; with `fast` (nothing downloading) aria2c is
+   * stopped as soon as the session is saved.
+   */
+  async stop(fast = false): Promise<void> {
     this.stopping = true;
     const proc = this.proc;
     if (!proc) return;
     const exited = new Promise<void>((r) => proc.once('exit', () => r()));
     try {
       await this.client?.call('aria2.saveSession');
-      await this.client?.call('aria2.shutdown');
+      if (fast) proc.kill();
+      else await this.client?.call('aria2.shutdown');
     } catch {
       proc.kill();
     }
-    const timer = setTimeout(() => proc.kill('SIGKILL'), 3000);
+    const timer = setTimeout(() => proc.kill('SIGKILL'), 6000);
     await exited;
     clearTimeout(timer);
     this.client?.close();
