@@ -326,7 +326,11 @@ app.whenReady().then(async () => {
   // actually ran (electron-builder sets PORTABLE_EXECUTABLE_FILE), not the temp copy.
   const portableExe = process.env.PORTABLE_EXECUTABLE_FILE;
   const handlerArgs: [string, string?, string[]?] = portableExe ? ['magnet', portableExe, []] : ['magnet'];
-  if (app.isPackaged && !settings.getFlag(portableExe ? 'magnetRegisteredPortable' : 'magnetRegistered')) {
+  // Also register again when no app handles magnet: links at all (an upgrade's uninstall step
+  // used to remove the registration). If the user picked another client, that app is listed
+  // and is left alone.
+  const noHandler = !app.getApplicationNameForProtocol('magnet:?xt=urn:btih:0');
+  if (app.isPackaged && (noHandler || !settings.getFlag(portableExe ? 'magnetRegisteredPortable' : 'magnetRegistered'))) {
     if (app.isDefaultProtocolClient(...handlerArgs) || app.setAsDefaultProtocolClient(...handlerArgs)) {
       settings.setFlag(portableExe ? 'magnetRegisteredPortable' : 'magnetRegistered', true);
     }
