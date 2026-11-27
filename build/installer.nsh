@@ -3,7 +3,11 @@
 ; Fresh install or update? Decided before anything is installed: an auto-update passes
 ; --updated, and a manual install over an existing copy finds electron-builder's install key
 ; (a real uninstall deletes it). Only a fresh install asks about magnet links on first launch.
-Var ddFreshInstall
+; Declared only for the installer: the uninstaller is compiled from this file too and
+; would warn (an error here) about an unused variable.
+!ifndef BUILD_UNINSTALLER
+  Var ddFreshInstall
+!endif
 
 !macro customInit
   StrCpy $ddFreshInstall "1"
